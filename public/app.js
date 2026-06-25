@@ -1,0 +1,958 @@
+const apiBase = "/plugins/signalk-ajrm-marine-voyage-viewer";
+const elements = {
+  map: document.querySelector("#map"),
+  toggleVoyages: document.querySelector("#toggleVoyages"),
+  toggleCharts: document.querySelector("#toggleCharts"),
+  refreshVoyages: document.querySelector("#refreshVoyages"),
+  toggleSummary: document.querySelector("#toggleSummary"),
+  voyageDrawer: document.querySelector("#voyageDrawer"),
+  chartDrawer: document.querySelector("#chartDrawer"),
+  chartStatus: document.querySelector("#chartStatus"),
+  fileTabs: [...document.querySelectorAll(".file-tab")],
+  baseMapChoices: [...document.querySelectorAll('input[name="baseMap"]')],
+  autoCharts: document.querySelector("#checkAutoCharts"),
+  openSeaMap: document.querySelector("#checkOpenSeaMap"),
+  voyageList: document.querySelector("#voyageList"),
+  statusLine: document.querySelector("#statusLine"),
+  selectedDetails: document.querySelector("#selectedDetails"),
+  plotSelected: document.querySelector("#plotSelected"),
+  centrePlot: document.querySelector("#centrePlot"),
+  toggleDrTrack: document.querySelector("#toggleDrTrack"),
+  plotProgress: document.querySelector("#plotProgress"),
+  progressText: document.querySelector("#progressText"),
+  progressPercent: document.querySelector("#progressPercent"),
+  progressBar: document.querySelector("#progressBar"),
+  summaryPanel: document.querySelector("#summaryPanel"),
+  summaryTitle: document.querySelector("#summaryTitle"),
+  summarySubtitle: document.querySelector("#summarySubtitle"),
+  summaryGrid: document.querySelector("#summaryGrid"),
+  downloadGpx: document.querySelector("#downloadGpx"),
+  downloadSelected: document.querySelector("#downloadSelected"),
+  comment: document.querySelector("#comment"),
+  toast: document.querySelector("#toast"),
+};
+
+let map;
+let trackLayer;
+let drTrackLayer;
+let markerLayer;
+let baseLayers = {};
+let currentBaseLayer;
+let autoChartGroup;
+let autoChartLayer;
+let autoChartFallbackLayer;
+let autoChartId;
+let autoChartList = [];
+let chartResourcesLoaded = false;
+let chartResourcesLoading = null;
+let seamarkLayer;
+const chartLayerZIndex = 450;
+const seamarkLayerZIndex = 650;
+let progressTimer = null;
+let activeKind = "voyages";
+let currentFiles = [];
+let selectedFile = null;
+let plottedBounds = null;
+let currentAnalysis = null;
+let drTrackVisible = false;
+
+function showToast(message, isError = false) {
+  elements.toast.textContent = message;
+  elements.toast.style.background = isError ? "#7f1d1d" : "#0f172a";
+  elements.toast.classList.add("visible");
+  setTimeout(() => elements.toast.classList.remove("visible"), 3500);
+}
+
+async function requestJson(url, options) {
+  const response = await fetch(url, {
+    headers: { Accept: "application/json" },
+    ...options,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.ok === false) {
+    throw new Error(data.error || response.statusText || "Request failed");
+  }
+  return data;
+}
+
+function initMap() {
+  map = L.map(elements.map, { zoomControl: true }).setView([56.21, -5.56], 11);
+  const naturalEarth = makeNaturalEarthLayer();
+  const empty = L.tileLayer("");
+  const openStreetMap = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxNativeZoom: 19,
+    maxZoom: 22,
+    attribution: "© OpenStreetMap contributors",
+  });
+  const openTopoMap = L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
+    maxNativeZoom: 17,
+    maxZoom: 22,
+    attribution: "Map data © OpenStreetMap contributors | Style © OpenTopoMap",
+  });
+  const satellite = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { maxNativeZoom: 17, maxZoom: 22, attribution: "© Esri © OpenStreetMap Contributors" },
+  );
+  seamarkLayer = L.tileLayer("https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png", {
+    maxNativeZoom: 19,
+    maxZoom: 22,
+    zIndex: seamarkLayerZIndex,
+    attribution: "© OpenSeaMap contributors",
+  });
+  baseLayers = {
+    Empty: empty,
+    "NaturalEarth (offline)": naturalEarth,
+    OpenStreetMap: openStreetMap,
+    OpenTopoMap: openTopoMap,
+    Satellite: satellite,
+  };
+  autoChartGroup = L.layerGroup();
+  setBaseMap(localStorage.getItem("ajrmMarineVoyageViewerBaseMap") || "NaturalEarth (offline)");
+  setOverlay(
+    autoChartGroup,
+    localStorage.getItem("ajrmMarineVoyageViewerAutoCharts") === "true",
+    "ajrmMarineVoyageViewerAutoCharts",
+  );
+  setOverlay(
+    seamarkLayer,
+    localStorage.getItem("ajrmMarineVoyageViewerOpenSeaMap") !== "false",
+    "ajrmMarineVoyageViewerOpenSeaMap",
+  );
+  trackLayer = L.layerGroup().addTo(map);
+  drTrackLayer = L.layerGroup().addTo(map);
+  markerLayer = L.layerGroup().addTo(map);
+  map.on("moveend zoomend", updateAutoChart);
+  loadChartResources();
+}
+
+function makeNaturalEarthLayer() {
+  if (window.protomapsL && window.protomapsL.leafletLayer) {
+    const options = {
+      url: "./ne_10m_land.pmtiles",
+      flavor: "light",
+      theme: "light",
+      lang: "en",
+      maxDataZoom: 5,
+    };
+    if (
+      window.protomapsL.light &&
+      window.protomapsL.paintRules &&
+      window.protomapsL.labelRules
+    ) {
+      const theme = {
+        ...window.protomapsL.light,
+        water: "rgba(0,0,0,0)",
+      };
+      options.paintRules = window.protomapsL.paintRules(theme);
+      options.labelRules = window.protomapsL.labelRules(theme);
+    }
+    return window.protomapsL.leafletLayer(options);
+  }
+  return L.tileLayer("", { attribution: "NaturalEarth unavailable" });
+}
+
+function setBaseMap(name) {
+  if (!map || !baseLayers[name]) return;
+  if (currentBaseLayer) map.removeLayer(currentBaseLayer);
+  currentBaseLayer = baseLayers[name];
+  currentBaseLayer.addTo(map);
+  localStorage.setItem("ajrmMarineVoyageViewerBaseMap", name);
+  for (const choice of elements.baseMapChoices) {
+    choice.checked = choice.value === name;
+  }
+  keepChartLayersOnTop();
+}
+
+function setOverlay(layer, enabled, storageKey) {
+  if (!map || !layer) return;
+  if (enabled) layer.addTo(map);
+  else map.removeLayer(layer);
+  localStorage.setItem(storageKey, String(enabled));
+  if (layer === autoChartGroup) elements.autoCharts.checked = enabled;
+  if (layer === seamarkLayer) elements.openSeaMap.checked = enabled;
+  updateAutoChart();
+  keepChartLayersOnTop();
+}
+
+async function setAutoChartsEnabled(enabled) {
+  setOverlay(autoChartGroup, enabled, "ajrmMarineVoyageViewerAutoCharts");
+  if (enabled && !chartResourcesLoaded) {
+    elements.chartStatus.textContent = "Loading Signal K chart resources…";
+    await loadChartResources({ force: true });
+    updateAutoChart();
+  }
+}
+
+function chartUrl(chart) {
+  return chart?.tilemapUrl || chart?.url || chart?.tileUrl || chart?.href || "";
+}
+
+function chartZoom(chart) {
+  const min = Number(chart?.minzoom ?? chart?.minZoom ?? 0);
+  const max = Number(chart?.maxzoom ?? chart?.maxZoom ?? 24);
+  return {
+    min: Number.isFinite(min) ? min : 0,
+    max: Number.isFinite(max) ? max : 24,
+  };
+}
+
+function chartBoundsCandidates(chart) {
+  const source =
+    chart?.bounds ||
+    chart?.boundingBox ||
+    chart?.extent ||
+    chart?.bbox ||
+    chart?.properties?.bounds ||
+    chart?.properties?.bbox ||
+    chart?.metadata?.bounds;
+  const candidates = [];
+  if (Array.isArray(source) && source.some(Array.isArray)) {
+    const points = source
+      .filter(Array.isArray)
+      .map((point) => point.slice(0, 2).map(Number))
+      .filter((point) => point.length === 2 && point.every(Number.isFinite));
+    if (points.length >= 2) {
+      const xs = points.map((point) => point[0]);
+      const ys = points.map((point) => point[1]);
+      candidates.push([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]);
+      candidates.push([Math.min(...ys), Math.min(...xs), Math.max(...ys), Math.max(...xs)]);
+    }
+  } else {
+    let bounds = null;
+    if (Array.isArray(source)) {
+      bounds = source.slice(0, 4).map(Number);
+    } else if (typeof source === "string") {
+      bounds = source.split(/[\\s,]+/).map(Number).filter(Number.isFinite).slice(0, 4);
+    } else if (source && typeof source === "object") {
+      if (source.sw && source.ne) {
+        bounds = [
+          source.sw.lng ?? source.sw.lon ?? source.sw[1],
+          source.sw.lat ?? source.sw[0],
+          source.ne.lng ?? source.ne.lon ?? source.ne[1],
+          source.ne.lat ?? source.ne[0],
+        ].map(Number);
+      } else {
+        bounds = [
+          source.minLon ?? source.west ?? source.left ?? source.minx ?? source.xmin,
+          source.minLat ?? source.south ?? source.bottom ?? source.miny ?? source.ymin,
+          source.maxLon ?? source.east ?? source.right ?? source.maxx ?? source.xmax,
+          source.maxLat ?? source.north ?? source.top ?? source.maxy ?? source.ymax,
+        ].map(Number);
+      }
+    }
+    if (bounds?.length >= 4) {
+      const [a, b, c, d] = bounds;
+      candidates.push([Math.min(a, c), Math.min(b, d), Math.max(a, c), Math.max(b, d)]);
+      candidates.push([Math.min(b, d), Math.min(a, c), Math.max(b, d), Math.max(a, c)]);
+    }
+  }
+  return candidates.filter(
+    (bounds) =>
+      bounds.every(Number.isFinite) &&
+      bounds[0] >= -180 &&
+      bounds[2] <= 180 &&
+      bounds[1] >= -90 &&
+      bounds[3] <= 90 &&
+      bounds[0] < bounds[2] &&
+      bounds[1] < bounds[3],
+  );
+}
+
+function chartBounds(chart, lat, lon) {
+  const candidates = chartBoundsCandidates(chart);
+  return (
+    candidates.find(
+      (bounds) => lon >= bounds[0] && lon <= bounds[2] && lat >= bounds[1] && lat <= bounds[3],
+    ) ||
+    candidates[0] ||
+    null
+  );
+}
+
+function chartContains(chart, lat, lon) {
+  const bounds = chartBounds(chart, lat, lon);
+  return Boolean(bounds && lon >= bounds[0] && lon <= bounds[2] && lat >= bounds[1] && lat <= bounds[3]);
+}
+
+function chartArea(chart, lat, lon) {
+  const bounds = chartBounds(chart, lat, lon);
+  return bounds ? Math.abs((bounds[2] - bounds[0]) * (bounds[3] - bounds[1])) : Number.MAX_VALUE;
+}
+
+function makeAutoChartLayer(chart) {
+  const url = chartUrl(chart);
+  if (!url) return null;
+  const zoom = chartZoom(chart);
+  return L.tileLayer(url, {
+    minNativeZoom: zoom.min,
+    maxNativeZoom: zoom.max,
+    minZoom: zoom.min,
+    maxZoom: 22,
+    zIndex: chartLayerZIndex,
+    attribution: "",
+    errorTileUrl: "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=",
+  });
+}
+
+function makeAutoChartFallbackLayer() {
+  return L.tileLayer("", { attribution: "" });
+}
+
+function chooseAutoChart() {
+  if (!map) return null;
+  const center = map.getCenter();
+  const zoom = map.getZoom();
+  const containing = autoChartList.filter((chart) => chartContains(chart, center.lat, center.lng));
+  const matches = containing.filter((chart) => {
+    const range = chartZoom(chart);
+    return zoom >= range.min - 0.1 && zoom <= map.getMaxZoom() + 0.1;
+  });
+  return (
+    matches.sort((a, b) => {
+      const zoomA = chartZoom(a);
+      const zoomB = chartZoom(b);
+      return (
+        zoomB.min - zoomA.min ||
+        chartArea(a, center.lat, center.lng) - chartArea(b, center.lat, center.lng) ||
+        zoomB.max - zoomA.max
+      );
+    })[0] || null
+  );
+}
+
+function updateAutoChart() {
+  if (!map || !autoChartGroup || !map.hasLayer(autoChartGroup)) return;
+  if (!chartResourcesLoaded) {
+    elements.chartStatus.textContent = chartResourcesLoading
+      ? "Loading Signal K chart resources…"
+      : "Chart resources have not loaded yet.";
+    return;
+  }
+  const chart = chooseAutoChart();
+  if (!chart) {
+    elements.chartStatus.textContent = autoChartList.length
+      ? "No chart covers the current map centre."
+      : "No Signal K chart resources found.";
+    if (autoChartId === "__fallback") return;
+    autoChartGroup.clearLayers();
+    autoChartLayer = null;
+    autoChartId = "__fallback";
+    autoChartFallbackLayer = makeAutoChartFallbackLayer();
+    autoChartGroup.addLayer(autoChartFallbackLayer);
+    keepChartLayersOnTop();
+    return;
+  }
+  elements.chartStatus.textContent = chart.name || chart.description || chart.__autoChartId || "Auto chart selected";
+  if (autoChartId === chart.__autoChartId && autoChartLayer && autoChartGroup.hasLayer(autoChartLayer)) {
+    keepChartLayersOnTop();
+    return;
+  }
+  autoChartGroup.clearLayers();
+  autoChartLayer = makeAutoChartLayer(chart);
+  autoChartId = chart.__autoChartId;
+  if (autoChartLayer) autoChartGroup.addLayer(autoChartLayer);
+  keepChartLayersOnTop();
+}
+
+async function loadChartResources({ force = false } = {}) {
+  if (chartResourcesLoading) return chartResourcesLoading;
+  if (chartResourcesLoaded && !force) return autoChartList;
+  chartResourcesLoading = (async () => {
+    try {
+      let charts = null;
+      try {
+        charts = await requestJson("/signalk/v1/api/resources/charts");
+      } catch (_error) {
+        const data = await requestJson(`${apiBase}/charts`);
+        charts = data.charts || {};
+      }
+      autoChartList = Object.entries(charts || {}).map(([id, chart]) => ({
+        ...(chart || {}),
+        __autoChartId: id,
+      }));
+      chartResourcesLoaded = true;
+      elements.chartStatus.textContent = `${autoChartList.length} chart resource${autoChartList.length === 1 ? "" : "s"} found`;
+      updateAutoChart();
+    } catch (error) {
+      autoChartList = [];
+      chartResourcesLoaded = false;
+      elements.chartStatus.textContent = `Chart resources not available: ${error.message}`;
+    } finally {
+      chartResourcesLoading = null;
+    }
+    return autoChartList;
+  })();
+  return chartResourcesLoading;
+}
+
+function keepChartLayersOnTop() {
+  autoChartGroup?.eachLayer((layer) => layer.setZIndex?.(chartLayerZIndex));
+  if (seamarkLayer && map?.hasLayer(seamarkLayer)) {
+    seamarkLayer.setZIndex?.(seamarkLayerZIndex);
+    seamarkLayer.bringToFront?.();
+  }
+  trackLayer?.eachLayer((layer) => layer.bringToFront?.());
+  drTrackLayer?.eachLayer((layer) => layer.bringToFront?.());
+  markerLayer?.eachLayer((layer) => layer.bringToFront?.());
+}
+
+async function loadFiles(kind = activeKind) {
+  activeKind = kind;
+  selectedFile = null;
+  currentFiles = [];
+  updateFileTabs();
+  updateSelection();
+  showSelectedPlaceholder();
+  elements.statusLine.textContent = `Loading ${labelForKind(kind, "plural").toLowerCase()}…`;
+  elements.voyageList.innerHTML = "";
+  try {
+    const data = await requestJson(`${apiBase}/files/${kind}`);
+    currentFiles = data.files || [];
+    renderFiles(currentFiles);
+  } catch (error) {
+    elements.statusLine.textContent = error.message;
+    showToast(error.message, true);
+  }
+}
+
+function renderFiles(files) {
+  elements.statusLine.textContent = `${files.length} ${labelForKind(activeKind, files.length === 1 ? "singular" : "plural").toLowerCase()} found`;
+  if (files.length === 0) {
+    elements.voyageList.innerHTML = `<p class="empty">No ${labelForKind(activeKind, "plural").toLowerCase()} found in the configured directory.</p>`;
+    return;
+  }
+  elements.voyageList.replaceChildren(
+    ...files.map((file) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "file-row";
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", "false");
+      row.innerHTML = `
+        <strong>${escapeHtml(file.fileName)}</strong>
+        ${file.comment ? `<span class="file-comment">${escapeHtml(file.comment)}</span>` : ""}
+        <span>${escapeHtml(fileMeta(file))}</span>
+      `;
+      row.addEventListener("click", () => selectFile(file));
+      return row;
+    }),
+  );
+}
+
+function selectFile(file) {
+  selectedFile = file;
+  for (const row of elements.voyageList.querySelectorAll(".file-row")) {
+    const selected = row.querySelector("strong")?.textContent === file.fileName;
+    row.classList.toggle("selected", selected);
+    row.setAttribute("aria-selected", String(selected));
+  }
+  updateSelection();
+  showSelectedPlaceholder();
+}
+
+function updateSelection() {
+  const hasSelection = Boolean(selectedFile);
+  elements.plotSelected.disabled = !hasSelection;
+  elements.centrePlot.disabled = !plottedBounds;
+  setLinkEnabled(elements.downloadGpx, hasSelection);
+  setLinkEnabled(elements.downloadSelected, hasSelection);
+  if (!hasSelection) {
+    elements.selectedDetails.textContent = `Select one of the ${labelForKind(activeKind, "plural").toLowerCase()} below.`;
+    elements.downloadGpx.href = "#";
+    elements.downloadSelected.href = "#";
+    return;
+  }
+  elements.selectedDetails.textContent = selectedFile.comment
+    ? `${selectedFile.fileName} · ${selectedFile.comment} · ${fileMeta(selectedFile)}`
+    : `${selectedFile.fileName} · ${fileMeta(selectedFile)}`;
+  elements.downloadSelected.href = downloadUrl(activeKind, selectedFile.fileName);
+  elements.downloadSelected.download = selectedFile.fileName;
+  elements.downloadGpx.href = gpxUrl(activeKind, selectedFile.fileName);
+  elements.downloadGpx.download = gpxFileName(selectedFile.fileName);
+}
+
+function showSelectedPlaceholder() {
+  plottedBounds = null;
+  currentAnalysis = null;
+  drTrackVisible = false;
+  elements.centrePlot.disabled = true;
+  elements.toggleDrTrack.disabled = true;
+  elements.toggleDrTrack.setAttribute("aria-pressed", "false");
+  elements.summaryTitle.textContent = selectedFile?.fileName || "Voyage summary";
+  elements.summarySubtitle.textContent = selectedFile
+    ? "Press Plot to draw this recording and build its summary."
+    : "";
+  elements.summaryGrid.replaceChildren();
+  elements.comment.textContent = "";
+}
+
+async function analyseSelectedFile() {
+  if (!selectedFile) return;
+  await analyseFile(activeKind, selectedFile.fileName);
+}
+
+async function analyseFile(kind, fileName) {
+  startPlotProgress(fileName);
+  showToast(`Analysing ${fileName}…`);
+  elements.statusLine.textContent = `Analysing ${fileName}…`;
+  try {
+    const data = await requestJson(
+      `${apiBase}/files/${encodeURIComponent(kind)}/${encodeURIComponent(fileName)}/analyse`,
+      { method: "POST" },
+    );
+    setPlotProgress(90, "Rendering track and summary…");
+    renderAnalysis(data.analysis);
+    finishPlotProgress("Voyage plotted.");
+    showToast("Voyage plotted.");
+  } catch (error) {
+    failPlotProgress(error.message);
+    showToast(error.message, true);
+    elements.statusLine.textContent = error.message;
+  }
+}
+
+function startPlotProgress(fileName) {
+  clearInterval(progressTimer);
+  elements.plotProgress.classList.remove("hidden");
+  setPlotProgress(0, `Opening ${fileName}…`);
+  let elapsed = 0;
+  let phase = "opening";
+  const scanSeconds = estimatedScanSeconds(selectedFile);
+  progressTimer = setInterval(() => {
+    elapsed += 0.5;
+    if (phase === "opening" && elapsed >= 1) {
+      phase = "scanning";
+      elapsed = 0;
+      setPlotProgress(0, `Scanning ${estimatedDurationLabel(selectedFile)} of Signal K data…`);
+      return;
+    }
+    if (phase === "scanning") {
+      const ratio = Math.min(0.98, elapsed / scanSeconds);
+      const percent = 4 + ratio * 78;
+      setPlotProgress(percent, `Scanning Signal K data… ${Math.round(percent)}%`);
+      return;
+    }
+    setPlotProgress(Math.min(8, elapsed * 8), `Opening ${fileName}…`);
+  }, 500);
+}
+
+function estimatedScanSeconds(file) {
+  const started = Date.parse(file?.startedAt || "");
+  const stopped = Date.parse(file?.stoppedAt || "");
+  const hours = Number.isFinite(started) && Number.isFinite(stopped)
+    ? Math.max(0.1, (stopped - started) / 3600000)
+    : 1;
+  return Math.max(8, Math.min(90, 6 + hours * 5));
+}
+
+function estimatedDurationLabel(file) {
+  const started = Date.parse(file?.startedAt || "");
+  const stopped = Date.parse(file?.stoppedAt || "");
+  if (!Number.isFinite(started) || !Number.isFinite(stopped)) return "the voyage";
+  return formatDuration((stopped - started) / 1000);
+}
+
+function setPlotProgress(percent, message) {
+  const value = Math.max(0, Math.min(100, Math.round(percent)));
+  elements.progressBar.style.width = `${value}%`;
+  elements.progressPercent.textContent = `${value}%`;
+  elements.progressText.textContent = message;
+}
+
+function finishPlotProgress(message) {
+  clearInterval(progressTimer);
+  progressTimer = null;
+  setPlotProgress(100, message);
+  setTimeout(() => {
+    elements.plotProgress.classList.add("hidden");
+  }, 1200);
+}
+
+function failPlotProgress(message) {
+  clearInterval(progressTimer);
+  progressTimer = null;
+  setPlotProgress(100, message || "Plot failed.");
+  elements.plotProgress.classList.add("failed");
+  setTimeout(() => {
+    elements.plotProgress.classList.add("hidden");
+    elements.plotProgress.classList.remove("failed");
+  }, 4500);
+}
+
+function startExportProgress(fileName) {
+  clearInterval(progressTimer);
+  elements.plotProgress.classList.remove("hidden", "failed");
+  setPlotProgress(8, `Preparing GPX export for ${fileName}…`);
+  const stages = [
+    [24, "Opening recording…"],
+    [42, "Reading track points…"],
+    [62, "Building GPX file…"],
+    [78, "Preparing download…"],
+    [90, "Handing GPX to browser…"],
+  ];
+  let index = 0;
+  progressTimer = setInterval(() => {
+    if (index < stages.length) {
+      setPlotProgress(stages[index][0], stages[index][1]);
+      index += 1;
+    }
+  }, 650);
+}
+
+async function exportSelectedGpx(event) {
+  event.preventDefault();
+  if (!selectedFile || elements.downloadGpx.classList.contains("disabled")) return;
+  const fileName = selectedFile.fileName;
+  startExportProgress(fileName);
+  showDownloadFeedback(elements.downloadGpx, "Preparing…");
+  try {
+    const response = await fetch(gpxUrl(activeKind, fileName), { headers: { Accept: "application/gpx+xml" } });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(text || response.statusText || "GPX export failed");
+    }
+    setPlotProgress(94, "Saving GPX download…");
+    const blob = await response.blob();
+    downloadBlob(blob, elements.downloadGpx.download || gpxFileName(fileName));
+    finishPlotProgress("GPX download ready.");
+    showToast("GPX download ready.");
+  } catch (error) {
+    failPlotProgress(error.message);
+    showToast(error.message, true);
+  }
+}
+
+function downloadBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName || "voyage.gpx";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+function renderAnalysis(analysis) {
+  currentAnalysis = analysis;
+  const track = analysis.track || [];
+  trackLayer.clearLayers();
+  drTrackLayer.clearLayers();
+  markerLayer.clearLayers();
+  plottedBounds = null;
+  if (track.length > 1) {
+    const line = L.polyline(
+      track.map((point) => [point.lat, point.lon]),
+      { color: "#f97316", weight: 4, opacity: 0.92 },
+    ).addTo(trackLayer);
+    plottedBounds = line.getBounds();
+    centrePlot();
+    addEndMarker(track[0], "Start", "#22c55e");
+    addEndMarker(track[track.length - 1], "Finish", "#ef4444");
+  }
+  drTrackVisible = Boolean(hasDrTracks(analysis.drTracks));
+  elements.toggleDrTrack.disabled = !drTrackVisible;
+  elements.toggleDrTrack.setAttribute("aria-pressed", String(drTrackVisible));
+  renderDrTracks();
+  elements.centrePlot.disabled = !plottedBounds;
+  for (const marker of analysis.hourlyMarkers || []) {
+    L.marker([marker.lat, marker.lon], {
+      icon: L.divIcon({
+        className: "hour-marker",
+        html: `<span>${escapeHtml(marker.label)}</span>`,
+        iconSize: [54, 28],
+        iconAnchor: [27, 14],
+      }),
+    }).addTo(markerLayer);
+  }
+  keepChartLayersOnTop();
+  renderSummary(analysis);
+}
+
+function hasDrTracks(drTracks) {
+  return Boolean(
+    drTracks &&
+      ((drTracks.operational || []).length > 1 ||
+        (drTracks.integrity || []).length > 1 ||
+        (drTracks.recoveryJumps || []).length > 0),
+  );
+}
+
+function renderDrTracks() {
+  drTrackLayer.clearLayers();
+  const drTracks = currentAnalysis?.drTracks;
+  if (!drTrackVisible || !hasDrTracks(drTracks)) return;
+  addTrackLine(drTracks.gps, { color: "#16a34a", weight: 3, opacity: 0.52 });
+  addTrackLine(drTracks.operational, {
+    color: "#0f172a",
+    weight: 4,
+    opacity: 0.72,
+    dashArray: "2 8",
+  });
+  addTrackLine(drTracks.integrity, {
+    color: "#f97316",
+    weight: 3,
+    opacity: 0.72,
+    dashArray: "8 6",
+  });
+  for (const jump of drTracks.recoveryJumps || []) {
+    if (!jump.from || !jump.to) continue;
+    L.polyline(
+      [[jump.from.lat, jump.from.lon], [jump.to.lat, jump.to.lon]],
+      { color: "#dc2626", weight: 5, opacity: 0.85, dashArray: "10 5" },
+    )
+      .bindTooltip(`DR recovery jump ${Math.round(jump.meters || 0)} m`, { permanent: false })
+      .addTo(drTrackLayer);
+  }
+  keepChartLayersOnTop();
+}
+
+function addTrackLine(points, options) {
+  const valid = (points || []).filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon));
+  if (valid.length < 2) return null;
+  return L.polyline(valid.map((point) => [point.lat, point.lon]), options).addTo(drTrackLayer);
+}
+
+function centrePlot() {
+  if (!map || !plottedBounds?.isValid?.()) return;
+  const leftPadding = elements.voyageDrawer.classList.contains("open") ? 380 : 28;
+  const bottomPadding = elements.summaryPanel.classList.contains("open") ? 72 : 28;
+  map.fitBounds(plottedBounds, {
+    paddingTopLeft: [leftPadding, 96],
+    paddingBottomRight: [28, bottomPadding],
+    maxZoom: 17,
+  });
+  setTimeout(updateAutoChart, 0);
+  keepChartLayersOnTop();
+}
+
+function addEndMarker(point, label, color) {
+  L.circleMarker([point.lat, point.lon], {
+    radius: 7,
+    color: "#fff",
+    weight: 2,
+    fillColor: color,
+    fillOpacity: 1,
+  }).bindTooltip(label, { permanent: false }).addTo(markerLayer);
+}
+
+function renderSummary(analysis) {
+  const summary = analysis.summary || {};
+  elements.summaryTitle.textContent = analysis.fileName || analysis.id || "Voyage";
+  elements.summarySubtitle.textContent = `${formatDateTime(summary.startedAt)} → ${formatDateTime(summary.stoppedAt)}`;
+  elements.downloadGpx.href = analysis.gpxUrl || gpxUrl(analysis.sourceKind || activeKind, analysis.fileName);
+  elements.downloadGpx.download = gpxFileNameFromAnalysis(analysis);
+  setLinkEnabled(elements.downloadGpx, true);
+  elements.comment.textContent = "";
+  const rows = [
+    ["Duration", formatDuration(summary.durationSeconds)],
+    ["Distance", formatNumber(summary.distanceNm, 1, " NM")],
+    ["Avg", formatNumber(summary.averageSpeedKnots, 1, " kn")],
+    ["Avg SOG", formatNumber(summary.averageRecordedSogKnots, 1, " kn")],
+    ["Max SOG", formatNumber(summary.maxSogKnots, 1, " kn")],
+    ["Max AWS", formatNumber(summary.maxApparentWindKnots, 1, " kn")],
+    ["Max TWS", formatNumber(summary.maxTrueWindKnots, 1, " kn")],
+    ["Min depth", formatNumber(summary.minDepthMeters, 1, " m")],
+    ["Points", `${summary.trackPoints || 0} (${analysis.track?.length || 0} plotted)`],
+    ["DR track", drTrackSummary(analysis.drTracks)],
+    ["Snapshots", String(summary.snapshotCount || 0)],
+    ["Start", summary.startReason || "—"],
+    ["Stop", summary.stopReason || "—"],
+  ];
+  if (analysis.comment) {
+    rows.push(["Comment", `“${analysis.comment}”`]);
+  }
+  elements.summaryGrid.replaceChildren(
+    ...rows.map(([label, value]) => {
+      const item = document.createElement("div");
+      item.className = "summary-item";
+      item.innerHTML = `<span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong>`;
+      return item;
+    }),
+  );
+}
+
+function drTrackSummary(drTracks) {
+  if (!hasDrTracks(drTracks)) return "—";
+  const source = drTracks.source === "bundle" ? "bundle" : "capture";
+  const operational = drTracks.original?.operational || (drTracks.operational || []).length;
+  const jumps = (drTracks.recoveryJumps || []).length;
+  return jumps ? `${operational} points · ${jumps} jump${jumps === 1 ? "" : "s"} · ${source}` : `${operational} points · ${source}`;
+}
+
+function gpxUrl(kind, fileName) {
+  return `${apiBase}/files/${encodeURIComponent(kind)}/${encodeURIComponent(fileName)}/track.gpx`;
+}
+
+function downloadUrl(kind, fileName) {
+  return `${apiBase}/files/${encodeURIComponent(kind)}/${encodeURIComponent(fileName)}/download`;
+}
+
+function gpxFileName(fileName) {
+  return `${String(fileName || "voyage").replace(/\\.(zip|jsonl|jsonl\\.gz)$/i, "")}.gpx`;
+}
+
+function gpxFileNameFromAnalysis(analysis) {
+  const commentName = safeFileStem(analysis.comment || "");
+  return `${commentName || String(analysis.id || analysis.fileName || "voyage").replace(/\\.(zip|jsonl|jsonl\\.gz)$/i, "")}.gpx`;
+}
+
+function safeFileStem(value) {
+  return String(value || "")
+    .trim()
+    .replace(/['"]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+function formatDateTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "—";
+  return date.toLocaleString([], {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatDuration(seconds) {
+  if (!Number.isFinite(Number(seconds)) || seconds <= 0) return "—";
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m ${total % 60}s`;
+}
+
+function formatNumber(value, digits, suffix) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return `${number.toFixed(digits)}${suffix}`;
+}
+
+function formatBytes(bytes) {
+  const number = Number(bytes);
+  if (!Number.isFinite(number)) return "—";
+  if (number > 1024 * 1024 * 1024) return `${(number / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  if (number > 1024 * 1024) return `${(number / 1024 / 1024).toFixed(1)} MB`;
+  return `${(number / 1024).toFixed(1)} KB`;
+}
+
+function fileMeta(file) {
+  const date = file.startedAt || file.modifiedAt;
+  const parts = [formatDateTime(date), formatBytes(file.bytes)];
+  if (file.stoppedAt) parts.push(`to ${formatDateTime(file.stoppedAt)}`);
+  if (file.compressed) parts.push("compressed");
+  return parts.filter((part) => part && part !== "—").join(" · ") || "—";
+}
+
+function labelForKind(kind, form = "plural") {
+  const labels = {
+    clips: ["Clip", "Clips"],
+    logs: ["Log", "Logs"],
+    voyages: ["Voyage", "Voyages"],
+  };
+  return (labels[kind] || labels.voyages)[form === "singular" ? 0 : 1];
+}
+
+function updateFileTabs() {
+  for (const tab of elements.fileTabs) {
+    const selected = tab.dataset.kind === activeKind;
+    tab.classList.toggle("active", selected);
+    tab.setAttribute("aria-pressed", String(selected));
+  }
+}
+
+function setLinkEnabled(link, enabled) {
+  link.classList.toggle("disabled", !enabled);
+  link.setAttribute("aria-disabled", String(!enabled));
+  if (!enabled) link.href = "#";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function refreshMapLayout() {
+  map.invalidateSize({ pan: false });
+  updateAutoChart();
+}
+
+function showDownloadFeedback(link, temporaryText = "Downloading…") {
+  if (!link) return;
+  if (link.classList.contains("disabled") || link.getAttribute("aria-disabled") === "true") return;
+  const originalText = link.dataset.originalText || link.textContent;
+  link.dataset.originalText = originalText;
+  link.classList.add("downloading");
+  link.textContent = temporaryText;
+  showToast("Preparing download…");
+  setTimeout(() => {
+    link.classList.remove("downloading");
+    link.textContent = originalText;
+  }, 1400);
+}
+
+function syncPanelButtons() {
+  elements.toggleVoyages.setAttribute("aria-pressed", String(elements.voyageDrawer.classList.contains("open")));
+  elements.toggleCharts.setAttribute("aria-pressed", String(elements.chartDrawer.classList.contains("open")));
+  elements.toggleSummary.setAttribute("aria-pressed", String(elements.summaryPanel.classList.contains("open")));
+}
+
+function togglePanel(panel) {
+  const open = !panel.classList.contains("open");
+  panel.classList.toggle("open", open);
+  syncPanelButtons();
+  setTimeout(refreshMapLayout, 180);
+}
+
+elements.toggleVoyages.addEventListener("click", () => togglePanel(elements.voyageDrawer));
+elements.toggleCharts.addEventListener("click", () => togglePanel(elements.chartDrawer));
+elements.refreshVoyages.addEventListener("click", () => loadFiles(activeKind));
+elements.plotSelected.addEventListener("click", analyseSelectedFile);
+elements.centrePlot.addEventListener("click", centrePlot);
+elements.toggleDrTrack.addEventListener("click", () => {
+  if (!hasDrTracks(currentAnalysis?.drTracks)) return;
+  drTrackVisible = !drTrackVisible;
+  elements.toggleDrTrack.setAttribute("aria-pressed", String(drTrackVisible));
+  renderDrTracks();
+});
+for (const tab of elements.fileTabs) {
+  tab.addEventListener("click", () => loadFiles(tab.dataset.kind || "voyages"));
+}
+elements.toggleSummary.addEventListener("click", () => {
+  const open = !elements.summaryPanel.classList.contains("open");
+  elements.summaryPanel.classList.toggle("open", open);
+  syncPanelButtons();
+  setTimeout(refreshMapLayout, 180);
+});
+for (const choice of elements.baseMapChoices) {
+  choice.addEventListener("change", () => {
+    if (choice.checked) setBaseMap(choice.value);
+  });
+}
+elements.autoCharts.addEventListener("change", () =>
+  setAutoChartsEnabled(elements.autoCharts.checked).catch((error) => showToast(error.message, true)),
+);
+elements.openSeaMap.addEventListener("change", () =>
+  setOverlay(seamarkLayer, elements.openSeaMap.checked, "ajrmMarineVoyageViewerOpenSeaMap"),
+);
+elements.downloadGpx.addEventListener("click", (event) => {
+  exportSelectedGpx(event);
+});
+elements.downloadSelected.addEventListener("click", (event) => {
+  if (elements.downloadSelected.classList.contains("disabled")) event.preventDefault();
+  showDownloadFeedback(elements.downloadSelected);
+});
+
+initMap();
+syncPanelButtons();
+updateFileTabs();
+showSelectedPlaceholder();
+loadFiles();

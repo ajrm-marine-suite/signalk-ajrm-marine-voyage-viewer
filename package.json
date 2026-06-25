@@ -1,0 +1,45 @@
+{
+  "name": "signalk-ajrm-marine-voyage-viewer",
+  "version": "0.5.0",
+  "description": "Voyage playback and diagnostics viewer for AJRM Marine Suite captures.",
+  "main": "plugin/index.js",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\" && node --check plugin/index.js && node --check public/app.js"
+  },
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-webapp",
+    "voyage",
+    "track",
+    "charts",
+    "signal-k",
+    "signalk",
+    "ajrm-marine-suite",
+    "marine",
+    "navigation"
+  ],
+  "author": "Anthony McDonald, with assistance from William McAusland",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ajrm-marine-suite/signalk-ajrm-marine-voyage-viewer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ajrm-marine-suite/signalk-ajrm-marine-voyage-viewer/issues"
+  },
+  "homepage": "https://github.com/ajrm-marine-suite/signalk-ajrm-marine-voyage-viewer#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "plugin",
+    "public",
+    "README.md",
+    "LICENSE"
+  ],
+  "signalk-plugin-enabled-by-default": true,
+  "signalk": {
+    "displayName": "AJRM Marine Voyage Viewer",
+    "appIcon": "./icon.svg"
+  }
+}
