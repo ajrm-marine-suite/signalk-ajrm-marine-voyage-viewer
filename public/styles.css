@@ -25,6 +25,7 @@ button,
   padding: 8px 12px;
   cursor: pointer;
   text-decoration: none;
+  white-space: nowrap;
   box-shadow:
     0 3px 0 #7f95a0,
     0 8px 16px rgb(15 23 42 / 18%),
@@ -198,16 +199,16 @@ h2 {
 
 .selected-actions {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   gap: 8px;
   margin-bottom: 10px;
 }
 
 .selected-actions button,
 .selected-actions .download-link {
-  min-width: 0;
-  padding-inline: 8px;
-  overflow-wrap: anywhere;
+  min-width: 118px;
+  padding-inline: 10px;
+  text-align: center;
 }
 
 .selected-details {
