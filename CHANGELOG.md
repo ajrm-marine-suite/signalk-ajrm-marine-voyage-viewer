@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.4
+
+- Rename disposable plot-cache sidecars to AJRM Marine naming while still accepting existing legacy cache files.
+
 ## 0.5.3
 
 - Double the main plotted voyage track line thickness for easier viewing.

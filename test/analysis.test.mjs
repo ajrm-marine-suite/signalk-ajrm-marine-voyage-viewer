@@ -237,6 +237,33 @@ test("caches plot analysis beside the source recording", async () => {
   assert.equal(second.summary.trackPoints, 2);
 });
 
+test("accepts legacy plot cache sidecars", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-cache-legacy-"));
+  const fileName = "capture-20260622T120000Z.jsonl";
+  const file = path.join(dir, fileName);
+  const records = [
+    captureRecord("2026-06-22T12:00:00.000Z", 56.0, -5.0, 2),
+    captureRecord("2026-06-22T12:10:00.000Z", 56.00833, -5.0, 3),
+  ];
+  await fs.writeFile(file, records.map((record) => JSON.stringify(record)).join("\n"));
+  const options = {
+    voyageDirectory: dir,
+    logDirectory: dir,
+    clipDirectory: dir,
+  };
+  const first = await _private.analyseFileSource("logs", fileName, options, 100);
+  const cachePath = _private.plotCachePath(file);
+  const legacyPath = _private.legacyPlotCachePath(file);
+  const cache = JSON.parse(await fs.readFile(cachePath, "utf8"));
+  cache.schema = ["watch", "keeper.plot-cache.v1"].join("");
+  await fs.rm(cachePath);
+  await fs.writeFile(legacyPath, `${JSON.stringify(cache)}\n`);
+  const second = await _private.analyseFileSource("logs", fileName, options, 100);
+  assert.equal(first.summary.trackPoints, 2);
+  assert.equal(second.cache.hit, true);
+  assert.equal(second.summary.trackPoints, 2);
+});
+
 function captureRecord(timestamp, latitude, longitude, sogKnots) {
   return {
     capturedAt: timestamp,

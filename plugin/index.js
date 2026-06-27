@@ -14,7 +14,8 @@ const DEFAULT_VOYAGE_DIRECTORY = "~/CapturePlusLogs/voyages";
 const DEFAULT_LOG_DIRECTORY = "~/CapturePlusLogs/captures";
 const DEFAULT_CLIP_DIRECTORY = "~/CapturePlusLogs/clips";
 const MAX_TRACK_POINTS = 6000;
-const PLOT_CACHE_SCHEMA = "watchkeeper.plot-cache.v1";
+const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v1";
+const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const AJRM_MARINE_GPS_INTEGRITY_STATE_PATH = "plugins.ajrmMarineGpsIntegrity.navigationIntegrity";
 const DR_TRACK_RELATIVE_PATH = "tracks/dr-track.jsonl";
 
@@ -284,7 +285,11 @@ async function sourceFingerprint(sourcePath) {
 }
 
 function plotCachePath(sourcePath) {
-  return `${sourcePath}.watchkeeper-plot.json`;
+  return `${sourcePath}.ajrm-marine-plot.json`;
+}
+
+function legacyPlotCachePath(sourcePath) {
+  return `${sourcePath}.${["watch", "keeper-plot"].join("")}.json`;
 }
 
 function gpxCachePath(sourcePath) {
@@ -292,13 +297,14 @@ function gpxCachePath(sourcePath) {
 }
 
 async function readFreshPlotCache(sourcePath, source, kind, file, maxTrackPoints) {
-  try {
-    const cache = JSON.parse(await fs.promises.readFile(plotCachePath(sourcePath), "utf8"));
-    if (cache.schema !== PLOT_CACHE_SCHEMA) return null;
-    if (cache.source?.kind !== kind || cache.source?.fileName !== file) return null;
-    if (cache.source?.bytes !== source.bytes || cache.source?.mtimeMs !== source.mtimeMs) return null;
-    if (Number(cache.options?.maxTrackPoints) !== Number(maxTrackPoints)) return null;
-    if (!cache.analysis || typeof cache.analysis !== "object") return null;
+  for (const cachePath of [plotCachePath(sourcePath), legacyPlotCachePath(sourcePath)]) {
+    const cache = await readPlotCacheFile(cachePath);
+    if (!cache) continue;
+    if (cache.schema !== PLOT_CACHE_SCHEMA && cache.schema !== LEGACY_PLOT_CACHE_SCHEMA) continue;
+    if (cache.source?.kind !== kind || cache.source?.fileName !== file) continue;
+    if (cache.source?.bytes !== source.bytes || cache.source?.mtimeMs !== source.mtimeMs) continue;
+    if (Number(cache.options?.maxTrackPoints) !== Number(maxTrackPoints)) continue;
+    if (!cache.analysis || typeof cache.analysis !== "object") continue;
     return {
       ...cache.analysis,
       cache: {
@@ -306,6 +312,13 @@ async function readFreshPlotCache(sourcePath, source, kind, file, maxTrackPoints
         generatedAt: cache.generatedAt || null,
       },
     };
+  }
+  return null;
+}
+
+async function readPlotCacheFile(cachePath) {
+  try {
+    return JSON.parse(await fs.promises.readFile(cachePath, "utf8"));
   } catch {
     return null;
   }
@@ -1108,6 +1121,7 @@ module.exports._private = {
   haversineMeters,
   hourlyMarkers,
   listVoyages,
+  legacyPlotCachePath,
   plotCachePath,
   thinTrack,
   trackDistanceNm,

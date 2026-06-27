@@ -59,7 +59,7 @@ overlay or GPX download.
 Voyage Viewer writes disposable sidecar files beside the selected source
 recording:
 
-- `<source>.watchkeeper-plot.json`: cached app analysis for fast re-plotting
+- `<source>.ajrm-marine-plot.json`: cached app analysis for fast re-plotting
 - `<source>.gpx`: cached GPX export
 
 The source recording remains authoritative. A sidecar is used only when its
