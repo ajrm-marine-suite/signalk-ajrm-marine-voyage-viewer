@@ -10,9 +10,14 @@ const packageInfo = require("../package.json");
 
 const MPS_TO_KNOTS = 1.9438444924406046;
 const METERS_TO_NM = 1 / 1852;
-const DEFAULT_VOYAGE_DIRECTORY = "~/CapturePlusLogs/voyages";
-const DEFAULT_LOG_DIRECTORY = "~/CapturePlusLogs/captures";
-const DEFAULT_CLIP_DIRECTORY = "~/CapturePlusLogs/clips";
+const DEFAULT_LOG_ROOT = "~/AJRMMarineLogs";
+const DEFAULT_VOYAGE_DIRECTORY = `${DEFAULT_LOG_ROOT}/voyages`;
+const DEFAULT_LOG_DIRECTORY = `${DEFAULT_LOG_ROOT}/captures`;
+const DEFAULT_CLIP_DIRECTORY = `${DEFAULT_LOG_ROOT}/clips`;
+const LEGACY_LOG_ROOT = ["~/Capture", "PlusLogs"].join("");
+const LEGACY_VOYAGE_DIRECTORY = `${LEGACY_LOG_ROOT}/voyages`;
+const LEGACY_LOG_DIRECTORY = `${LEGACY_LOG_ROOT}/captures`;
+const LEGACY_CLIP_DIRECTORY = `${LEGACY_LOG_ROOT}/clips`;
 const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v1";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
@@ -169,11 +174,17 @@ module.exports = function ajrmMarineVoyageViewer(app) {
 
 function normalizeOptions(value = {}) {
   return {
-    voyageDirectory: String(value.voyageDirectory || DEFAULT_VOYAGE_DIRECTORY),
-    logDirectory: String(value.logDirectory || DEFAULT_LOG_DIRECTORY),
-    clipDirectory: String(value.clipDirectory || DEFAULT_CLIP_DIRECTORY),
+    voyageDirectory: String(value.voyageDirectory || defaultDirectory(DEFAULT_VOYAGE_DIRECTORY, LEGACY_VOYAGE_DIRECTORY)),
+    logDirectory: String(value.logDirectory || defaultDirectory(DEFAULT_LOG_DIRECTORY, LEGACY_LOG_DIRECTORY)),
+    clipDirectory: String(value.clipDirectory || defaultDirectory(DEFAULT_CLIP_DIRECTORY, LEGACY_CLIP_DIRECTORY)),
     maxTrackPoints: clampInteger(value.maxTrackPoints, 500, 50000, MAX_TRACK_POINTS),
   };
+}
+
+function defaultDirectory(preferredDirectory, legacyDirectory) {
+  const preferred = expandHome(preferredDirectory);
+  const legacy = expandHome(legacyDirectory);
+  return !fs.existsSync(preferred) && fs.existsSync(legacy) ? legacyDirectory : preferredDirectory;
 }
 
 function directoryForKind(kind, currentOptions) {

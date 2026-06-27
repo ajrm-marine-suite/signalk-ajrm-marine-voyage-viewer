@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.5
+
+- Default recording folders to AJRM Marine Logger paths while retaining legacy-directory compatibility on upgraded Pis.
+
 ## 0.5.4
 
 - Rename disposable plot-cache sidecars to AJRM Marine naming while still accepting existing legacy cache files.
