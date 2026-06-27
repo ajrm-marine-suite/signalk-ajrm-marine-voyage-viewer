@@ -7,6 +7,10 @@ The app lists AJRM Marine Capture voyage bundles plus AJRM Marine Logger clips a
 logs. Any selected voyage, clip, or log can be plotted on a Leaflet chart,
 exported as GPX 1.1, downloaded, and summarised.
 
+Version `0.5.1` clarifies the app role: Voyage Viewer plots and exports
+recorded tracks. To replay a voyage, load the recording in AJRM Marine Logger
+and view the replay in AJRM Marine Display.
+
 Version `0.1.17` adds a **DR Track** overlay for voyage bundles that contain
 `tracks/dr-track.jsonl`. The overlay can show the recorded GPS comparison,
 operational dead-reckoning track, independent DR where relevant, and highlighted
@@ -32,8 +36,8 @@ Select one row, then use the shared Plot, Export GPX, or Download buttons.
 
 Each selected recording can be exported as GPX. The GPX contains the plotted
 own-vessel track with timestamped track points so other charting/navigation
-tools can replay or display the route. When a voyage has a comment, the GPX
-download filename is based on that comment.
+tools can display the route. When a voyage has a comment, the GPX download
+filename is based on that comment.
 
 ## Chart controls
 
@@ -88,6 +92,7 @@ do not need to unzip large voyage bundles.
 
 ## Public Beta
 
-Voyage playback and diagnostics viewer for AJRM Marine Suite captures.
+Plots and exports voyage tracks. For replay, load the voyage in AJRM Marine
+Logger and view it in Display.
 
 Development assistance: OpenAI Codex helped with code generation, refactoring, and automated testing during the beta development cycle.
