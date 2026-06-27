@@ -643,7 +643,7 @@ function renderAnalysis(analysis) {
   if (track.length > 1) {
     const line = L.polyline(
       track.map((point) => [point.lat, point.lon]),
-      { color: "#f97316", weight: 4, opacity: 0.92 },
+      { color: "#f97316", weight: 8, opacity: 0.92 },
     ).addTo(trackLayer);
     plottedBounds = line.getBounds();
     centrePlot();

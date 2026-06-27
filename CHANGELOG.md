@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.3
+
+- Double the main plotted voyage track line thickness for easier viewing.
+
 ## 0.5.2
 
 - Prevent selected-recording action labels from breaking awkwardly inside

@@ -7,8 +7,8 @@ The app lists AJRM Marine Capture voyage bundles plus AJRM Marine Logger clips a
 logs. Any selected voyage, clip, or log can be plotted on a Leaflet chart,
 exported as GPX 1.1, downloaded, and summarised.
 
-Version `0.5.2` keeps selected-recording action labels readable on narrow
-screens by wrapping whole buttons rather than breaking words inside them.
+Version `0.5.3` doubles the main plotted voyage track line thickness for easier
+viewing.
 
 Version `0.1.17` adds a **DR Track** overlay for voyage bundles that contain
 `tracks/dr-track.jsonl`. The overlay can show the recorded GPS comparison,
