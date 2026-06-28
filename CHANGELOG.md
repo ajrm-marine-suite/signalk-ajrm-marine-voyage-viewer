@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.6
+
+- Add Signal K AppStore navigation category metadata.
+
 ## 0.5.5
 
 - Default recording folders to AJRM Marine Logger paths while retaining legacy-directory compatibility on upgraded Pis.
