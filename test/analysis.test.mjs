@@ -326,8 +326,11 @@ test("web app exposes DR plot-fix overlay controls", async () => {
 
   assert.match(html, /id="toggleDrFixes"/);
   assert.match(app, /function renderDrPlotFixes/);
-  assert.match(app, /iconSize: \[1, 1\]/);
-  assert.match(css, /\.plot-fix-marker\.estimated-position \.plot-fix-symbol/);
+  assert.match(app, /className: `plot-fix-symbol-marker/);
+  assert.match(app, /className: "plot-fix-label-marker"/);
+  assert.match(app, /iconSize: \[28, 28\]/);
+  assert.match(app, /iconAnchor: \[14, 14\]/);
+  assert.match(css, /\.plot-fix-symbol-marker\.estimated-position \.plot-fix-symbol/);
 });
 
 function captureRecord(timestamp, latitude, longitude, sogKnots) {

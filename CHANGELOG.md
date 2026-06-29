@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.9
+
+- Render archived DR plot-fix symbols and time labels as separate Leaflet
+  markers so the square/circle/triangle symbol centre stays anchored to the
+  recorded coordinate.
+
 ## 0.5.8
 
 - Display archived observed fixes from DR Plotter as dot-in-circle symbols with

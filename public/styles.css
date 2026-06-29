@@ -472,22 +472,21 @@ h2 {
   box-shadow: 0 2px 8px rgb(15 23 42 / 35%);
 }
 
-.plot-fix-marker {
-  position: relative;
-  width: 1px;
-  height: 1px;
-  overflow: visible;
+.plot-fix-symbol-marker,
+.plot-fix-label-marker {
   background: transparent;
+  border: 0;
   color: #0f172a;
   font-weight: 900;
   font-size: 0.78rem;
+  overflow: visible;
 }
 
 .plot-fix-symbol {
   content: "";
   position: absolute;
-  left: 0;
-  top: 0;
+  left: 14px;
+  top: 14px;
   width: 20px;
   height: 20px;
   transform: translate(-50%, -50%);
@@ -510,8 +509,8 @@ h2 {
 
 .plot-fix-time {
   position: absolute;
-  left: 0;
-  bottom: 12px;
+  left: 37px;
+  top: 0;
   transform: translateX(-50%);
   padding: 1px 5px;
   border-radius: 4px;
@@ -520,24 +519,24 @@ h2 {
   white-space: nowrap;
 }
 
-.plot-fix-marker.electronic-fix .plot-fix-symbol {
+.plot-fix-symbol-marker.electronic-fix .plot-fix-symbol {
   border-radius: 2px;
 }
 
-.plot-fix-marker.observed-fix .plot-fix-symbol {
+.plot-fix-symbol-marker.observed-fix .plot-fix-symbol {
   border-color: #16a34a;
   border-radius: 50%;
 }
 
-.plot-fix-marker.observed-fix .plot-fix-symbol::after {
+.plot-fix-symbol-marker.observed-fix .plot-fix-symbol::after {
   background: #14532d;
 }
 
-.plot-fix-marker.estimated-position {
+.plot-fix-symbol-marker.estimated-position {
   color: #991b1b;
 }
 
-.plot-fix-marker.estimated-position .plot-fix-symbol {
+.plot-fix-symbol-marker.estimated-position .plot-fix-symbol {
   width: 0;
   height: 0;
   transform: translate(-50%, -64%);
@@ -549,7 +548,7 @@ h2 {
   box-shadow: none;
 }
 
-.plot-fix-marker.estimated-position .plot-fix-symbol::before {
+.plot-fix-symbol-marker.estimated-position .plot-fix-symbol::before {
   content: "";
   position: absolute;
   left: -8px;
@@ -561,13 +560,13 @@ h2 {
   border-bottom: 15px solid rgb(255 255 255 / 96%);
 }
 
-.plot-fix-marker.estimated-position .plot-fix-symbol::after {
+.plot-fix-symbol-marker.estimated-position .plot-fix-symbol::after {
   top: 14px;
   z-index: 1;
   background: #dc2626;
 }
 
-.plot-fix-marker.manual.electronic-fix .plot-fix-symbol {
+.plot-fix-symbol-marker.manual.electronic-fix .plot-fix-symbol {
   border-color: #2563eb;
 }
 

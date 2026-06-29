@@ -730,17 +730,28 @@ function renderDrPlotFixes() {
   if (!drFixesVisible || !fixes.length) return;
   for (const fix of fixes) {
     if (!Number.isFinite(fix.lat) || !Number.isFinite(fix.lon)) continue;
-    const marker = L.marker([fix.lat, fix.lon], {
+    const latlng = [fix.lat, fix.lon];
+    const marker = L.marker(latlng, {
       icon: L.divIcon({
-        className: `plot-fix-marker ${plotFixMarkerClass(fix)}`,
-        html: `<span class="plot-fix-time">${escapeHtml(formatTime(fix.timestamp))}</span><span class="plot-fix-symbol"></span>`,
-        iconSize: [1, 1],
-        iconAnchor: [0, 0],
-        popupAnchor: [0, -36],
+        className: `plot-fix-symbol-marker ${plotFixMarkerClass(fix)}`,
+        html: `<span class="plot-fix-symbol"></span>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+        popupAnchor: [0, -18],
       }),
     });
     marker.bindPopup(plotFixPopupHtml(fix), { maxWidth: 320 });
     marker.addTo(drPlotFixLayer);
+    L.marker(latlng, {
+      interactive: false,
+      keyboard: false,
+      icon: L.divIcon({
+        className: "plot-fix-label-marker",
+        html: `<span class="plot-fix-time">${escapeHtml(formatTime(fix.timestamp))}</span>`,
+        iconSize: [74, 24],
+        iconAnchor: [37, 38],
+      }),
+    }).addTo(drPlotFixLayer);
   }
   keepChartLayersOnTop();
 }
