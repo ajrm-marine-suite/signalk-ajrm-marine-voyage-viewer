@@ -472,6 +472,122 @@ h2 {
   box-shadow: 0 2px 8px rgb(15 23 42 / 35%);
 }
 
+.plot-fix-marker {
+  position: relative;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  background: transparent;
+  color: #0f172a;
+  font-weight: 900;
+  font-size: 0.78rem;
+}
+
+.plot-fix-symbol {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 20px;
+  height: 20px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #0f172a;
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 2px 5px rgb(15 23 42 / 32%);
+}
+
+.plot-fix-symbol::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #0f172a;
+}
+
+.plot-fix-time {
+  position: absolute;
+  left: 0;
+  bottom: 12px;
+  transform: translateX(-50%);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 1px 3px rgb(15 23 42 / 22%);
+  white-space: nowrap;
+}
+
+.plot-fix-marker.electronic-fix .plot-fix-symbol {
+  border-radius: 2px;
+}
+
+.plot-fix-marker.estimated-position {
+  color: #991b1b;
+}
+
+.plot-fix-marker.estimated-position .plot-fix-symbol {
+  width: 0;
+  height: 0;
+  transform: translate(-50%, -64%);
+  border-left: 12px solid transparent;
+  border-right: 12px solid transparent;
+  border-bottom: 22px solid #dc2626;
+  border-top: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.plot-fix-marker.estimated-position .plot-fix-symbol::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 4px;
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 15px solid rgb(255 255 255 / 96%);
+}
+
+.plot-fix-marker.estimated-position .plot-fix-symbol::after {
+  top: 14px;
+  z-index: 1;
+  background: #dc2626;
+}
+
+.plot-fix-marker.manual.electronic-fix .plot-fix-symbol {
+  border-color: #2563eb;
+}
+
+.plot-popup {
+  color: #172026;
+  min-width: 250px;
+}
+
+.plot-popup h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.plot-popup dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 10px;
+  margin: 0;
+}
+
+.plot-popup dt {
+  color: #64748b;
+}
+
+.plot-popup dd {
+  margin: 0;
+  font-weight: 800;
+}
+
 .toast {
   position: fixed;
   right: 18px;

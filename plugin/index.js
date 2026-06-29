@@ -23,6 +23,7 @@ const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v1";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const AJRM_MARINE_GPS_INTEGRITY_STATE_PATH = "plugins.ajrmMarineGpsIntegrity.navigationIntegrity";
 const DR_TRACK_RELATIVE_PATH = "tracks/dr-track.jsonl";
+const DR_PLOT_FIXES_RELATIVE_PATH = "tracks/dr-plot-fixes.json";
 
 module.exports = function ajrmMarineVoyageViewer(app) {
   const plugin = {};
@@ -418,6 +419,7 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
   const track = sortTrack(secondPass.track);
   const drTracks = (await readVoyageDrTracks(voyagePath, index, maxTrackPoints)) ||
     buildDrTracks(secondPass.drTrackSamples, maxTrackPoints, "capture");
+  const drPlotFixes = await readVoyageDrPlotFixes(voyagePath, index);
   const markers = hourlyMarkers(track);
   const summary = buildSummary(index, track, secondPass, firstPass, ownContext);
 
@@ -432,6 +434,7 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
     hourlyMarkers: markers,
     track: thinTrack(track, maxTrackPoints),
     drTracks,
+    drPlotFixes,
     originalTrackPoints: track.length,
   };
 }
@@ -497,6 +500,21 @@ async function readVoyageDrTracks(voyagePath, index, maxTrackPoints) {
       .map((line) => normalizeDrTrackSample(JSON.parse(line)))
       .filter(Boolean);
     return buildDrTracks(samples, maxTrackPoints, "bundle");
+  } catch {
+    return null;
+  }
+}
+
+async function readVoyageDrPlotFixes(voyagePath, index) {
+  const fileName = String(index?.drPlotFixes?.fileName || DR_PLOT_FIXES_RELATIVE_PATH);
+  try {
+    const text = await readZipEntryText(voyagePath, fileName);
+    const parsed = JSON.parse(text);
+    return {
+      source: "bundle",
+      fileName,
+      plotFixes: normalizeDrPlotFixes(parsed?.plotFixes || parsed?.fixes || []),
+    };
   } catch {
     return null;
   }
@@ -668,6 +686,44 @@ function normalizeDrPoint(value) {
     ageSeconds: numberOrNull(value?.ageSeconds),
     uncertaintyRadiusMeters: numberOrNull(value?.uncertaintyRadiusMeters),
   };
+}
+
+function normalizeDrPlotFixes(value) {
+  return (Array.isArray(value) ? value : [])
+    .map(normalizeDrPlotFix)
+    .filter(Boolean)
+    .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
+}
+
+function normalizeDrPlotFix(value) {
+  const source = value?.position || {};
+  const lat = Number(source.lat ?? source.latitude);
+  const lon = Number(source.lon ?? source.longitude);
+  const timestampMs = Date.parse(value?.timestamp);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(timestampMs)) return null;
+  return {
+    id: typeof value.id === "string" && value.id.trim() ? value.id.trim().slice(0, 80) : `plot-${new Date(timestampMs).toISOString()}`,
+    timestamp: new Date(timestampMs).toISOString(),
+    lat,
+    lon,
+    automatic: value.automatic === true,
+    plotType: ["manual", "timed", "gps-lost"].includes(value.plotType) ? value.plotType : null,
+    trust: stringOrNull(value.trust),
+    drSource: stringOrNull(value.drSource),
+    uncertaintyRadiusMeters: numberOrNull(value.uncertaintyRadiusMeters),
+    lastTrustedFixAgeSeconds: numberOrNull(value.lastTrustedFixAgeSeconds),
+    distanceFromLastTrustedFixMeters: numberOrNull(value.distanceFromLastTrustedFixMeters),
+    stwMps: numberOrNull(value.stwMps),
+    headingTrueDegrees: numberOrNull(value.headingTrueDegrees),
+    sogMps: numberOrNull(value.sogMps),
+    cogTrueDegrees: numberOrNull(value.cogTrueDegrees),
+    currentDriftMps: numberOrNull(value.currentDriftMps),
+    currentSetTrueDegrees: numberOrNull(value.currentSetTrueDegrees),
+  };
+}
+
+function stringOrNull(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function buildDrTracks(samples, maxTrackPoints, source) {
@@ -1133,6 +1189,7 @@ module.exports._private = {
   hourlyMarkers,
   listVoyages,
   legacyPlotCachePath,
+  normalizeDrPlotFixes,
   plotCachePath,
   thinTrack,
   trackDistanceNm,

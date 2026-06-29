@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.7
+
+- Read bundled `tracks/dr-plot-fixes.json` files from AJRM Marine Capture
+  voyages and add a **DR Fixes** chart overlay with navigator symbols and
+  popups.
+
 ## 0.5.6
 
 - Add Signal K AppStore navigation category metadata.

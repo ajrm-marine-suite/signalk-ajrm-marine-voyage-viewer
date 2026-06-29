@@ -197,6 +197,61 @@ test("analyses bundled DR track overlay samples", async () => {
   assert.ok(analysis.drTracks.recoveryJumps[0].meters > 400);
 });
 
+test("analyses bundled DR plot fixes", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-dr-fixes-"));
+  const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-dr-fixes-bundle-"));
+  const logFile = path.join(dir, "capture-2026-06-22T120000Z.jsonl");
+  const records = [
+    captureRecord("2026-06-22T12:00:00.000Z", 56.0, -5.0, 2),
+    captureRecord("2026-06-22T12:10:00.000Z", 56.00833, -5.0, 3),
+  ];
+  await fs.writeFile(logFile, records.map((record) => JSON.stringify(record)).join("\n"));
+  await fs.mkdir(path.join(bundleDir, "tracks"), { recursive: true });
+  await fs.writeFile(
+    path.join(bundleDir, "tracks", "dr-plot-fixes.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      plotFixes: [
+        {
+          id: "fix-one",
+          timestamp: "2026-06-22T12:05:00.000Z",
+          automatic: true,
+          plotType: "gps-lost",
+          position: { latitude: 56.004, longitude: -5.001 },
+          trust: "lost",
+          drSource: "heading-stw-current",
+          uncertaintyRadiusMeters: 42,
+          stwMps: 1.5,
+          headingTrueDegrees: 90,
+        },
+      ],
+    }),
+  );
+  await fs.writeFile(
+    path.join(bundleDir, "index.json"),
+    JSON.stringify({
+      id: "voyage-20260622T120000Z",
+      startedAt: "2026-06-22T12:00:00.000Z",
+      stoppedAt: "2026-06-22T12:10:00.000Z",
+      captureFiles: [],
+      captureReferences: [{ fileName: path.basename(logFile), sourcePath: logFile }],
+      drPlotFixes: { fileName: "tracks/dr-plot-fixes.json" },
+    }),
+  );
+  const zipPath = path.join(dir, "voyage-20260622T120000Z.zip");
+  await execFile("zip", ["-q", "-r", zipPath, "index.json", "tracks"], { cwd: bundleDir });
+
+  const analysis = await _private.analyseVoyage(zipPath, {
+    maxTrackPoints: 100,
+    options: { logDirectory: dir },
+  });
+  assert.equal(analysis.drPlotFixes.source, "bundle");
+  assert.equal(analysis.drPlotFixes.plotFixes.length, 1);
+  assert.equal(analysis.drPlotFixes.plotFixes[0].id, "fix-one");
+  assert.equal(analysis.drPlotFixes.plotFixes[0].lat, 56.004);
+  assert.equal(analysis.drPlotFixes.plotFixes[0].plotType, "gps-lost");
+});
+
 test("analyses raw AJRM Marine Logger jsonl recordings", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-"));
   const file = path.join(dir, "capture-20260622T120000Z.jsonl");
@@ -262,6 +317,17 @@ test("accepts legacy plot cache sidecars", async () => {
   assert.equal(first.summary.trackPoints, 2);
   assert.equal(second.cache.hit, true);
   assert.equal(second.summary.trackPoints, 2);
+});
+
+test("web app exposes DR plot-fix overlay controls", async () => {
+  const html = await fs.readFile(path.join(process.cwd(), "public", "index.html"), "utf8");
+  const app = await fs.readFile(path.join(process.cwd(), "public", "app.js"), "utf8");
+  const css = await fs.readFile(path.join(process.cwd(), "public", "styles.css"), "utf8");
+
+  assert.match(html, /id="toggleDrFixes"/);
+  assert.match(app, /function renderDrPlotFixes/);
+  assert.match(app, /iconSize: \[1, 1\]/);
+  assert.match(css, /\.plot-fix-marker\.estimated-position \.plot-fix-symbol/);
 });
 
 function captureRecord(timestamp, latitude, longitude, sogKnots) {

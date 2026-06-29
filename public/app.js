@@ -18,6 +18,7 @@ const elements = {
   plotSelected: document.querySelector("#plotSelected"),
   centrePlot: document.querySelector("#centrePlot"),
   toggleDrTrack: document.querySelector("#toggleDrTrack"),
+  toggleDrFixes: document.querySelector("#toggleDrFixes"),
   plotProgress: document.querySelector("#plotProgress"),
   progressText: document.querySelector("#progressText"),
   progressPercent: document.querySelector("#progressPercent"),
@@ -35,6 +36,7 @@ const elements = {
 let map;
 let trackLayer;
 let drTrackLayer;
+let drPlotFixLayer;
 let markerLayer;
 let baseLayers = {};
 let currentBaseLayer;
@@ -55,6 +57,7 @@ let selectedFile = null;
 let plottedBounds = null;
 let currentAnalysis = null;
 let drTrackVisible = false;
+let drFixesVisible = false;
 
 function showToast(message, isError = false) {
   elements.toast.textContent = message;
@@ -120,6 +123,7 @@ function initMap() {
   );
   trackLayer = L.layerGroup().addTo(map);
   drTrackLayer = L.layerGroup().addTo(map);
+  drPlotFixLayer = L.layerGroup().addTo(map);
   markerLayer = L.layerGroup().addTo(map);
   map.on("moveend zoomend", updateAutoChart);
   loadChartResources();
@@ -393,6 +397,7 @@ function keepChartLayersOnTop() {
   }
   trackLayer?.eachLayer((layer) => layer.bringToFront?.());
   drTrackLayer?.eachLayer((layer) => layer.bringToFront?.());
+  drPlotFixLayer?.eachLayer((layer) => layer.bringToFront?.());
   markerLayer?.eachLayer((layer) => layer.bringToFront?.());
 }
 
@@ -475,9 +480,12 @@ function showSelectedPlaceholder() {
   plottedBounds = null;
   currentAnalysis = null;
   drTrackVisible = false;
+  drFixesVisible = false;
   elements.centrePlot.disabled = true;
   elements.toggleDrTrack.disabled = true;
   elements.toggleDrTrack.setAttribute("aria-pressed", "false");
+  elements.toggleDrFixes.disabled = true;
+  elements.toggleDrFixes.setAttribute("aria-pressed", "false");
   elements.summaryTitle.textContent = selectedFile?.fileName || "Voyage summary";
   elements.summarySubtitle.textContent = selectedFile
     ? "Press Plot to draw this recording and build its summary."
@@ -638,6 +646,7 @@ function renderAnalysis(analysis) {
   const track = analysis.track || [];
   trackLayer.clearLayers();
   drTrackLayer.clearLayers();
+  drPlotFixLayer.clearLayers();
   markerLayer.clearLayers();
   plottedBounds = null;
   if (track.length > 1) {
@@ -654,6 +663,10 @@ function renderAnalysis(analysis) {
   elements.toggleDrTrack.disabled = !drTrackVisible;
   elements.toggleDrTrack.setAttribute("aria-pressed", String(drTrackVisible));
   renderDrTracks();
+  drFixesVisible = Boolean(hasDrPlotFixes(analysis.drPlotFixes));
+  elements.toggleDrFixes.disabled = !drFixesVisible;
+  elements.toggleDrFixes.setAttribute("aria-pressed", String(drFixesVisible));
+  renderDrPlotFixes();
   elements.centrePlot.disabled = !plottedBounds;
   for (const marker of analysis.hourlyMarkers || []) {
     L.marker([marker.lat, marker.lon], {
@@ -676,6 +689,10 @@ function hasDrTracks(drTracks) {
         (drTracks.integrity || []).length > 1 ||
         (drTracks.recoveryJumps || []).length > 0),
   );
+}
+
+function hasDrPlotFixes(drPlotFixes) {
+  return (drPlotFixes?.plotFixes || []).length > 0;
 }
 
 function renderDrTracks() {
@@ -705,6 +722,58 @@ function renderDrTracks() {
       .addTo(drTrackLayer);
   }
   keepChartLayersOnTop();
+}
+
+function renderDrPlotFixes() {
+  drPlotFixLayer.clearLayers();
+  const fixes = currentAnalysis?.drPlotFixes?.plotFixes || [];
+  if (!drFixesVisible || !fixes.length) return;
+  for (const fix of fixes) {
+    if (!Number.isFinite(fix.lat) || !Number.isFinite(fix.lon)) continue;
+    const marker = L.marker([fix.lat, fix.lon], {
+      icon: L.divIcon({
+        className: `plot-fix-marker ${plotFixMarkerClass(fix)}`,
+        html: `<span class="plot-fix-time">${escapeHtml(formatTime(fix.timestamp))}</span><span class="plot-fix-symbol"></span>`,
+        iconSize: [1, 1],
+        iconAnchor: [0, 0],
+        popupAnchor: [0, -36],
+      }),
+    });
+    marker.bindPopup(plotFixPopupHtml(fix), { maxWidth: 320 });
+    marker.addTo(drPlotFixLayer);
+  }
+  keepChartLayersOnTop();
+}
+
+function plotFixMarkerClass(fix) {
+  const classes = [fix.plotType || (fix.automatic ? "timed" : "manual")];
+  classes.push(fix.trust === "lost" || fix.plotType === "gps-lost" ? "estimated-position" : "electronic-fix");
+  return classes.join(" ");
+}
+
+function plotFixPopupHtml(fix) {
+  return `
+    <div class="plot-popup">
+      <h3>${escapeHtml(plotFixTitle(fix))} ${escapeHtml(formatTime(fix.timestamp))}</h3>
+      <dl>
+        ${popupRow("Position", formatPosition(fix))}
+        ${popupRow("GPS status", fix.trust ? fix.trust.toUpperCase() : "n/a")}
+        ${popupRow("DR source", fix.drSource || "n/a")}
+        ${popupRow("Uncertainty", formatMeters(fix.uncertaintyRadiusMeters))}
+        ${popupRow("Last trusted GPS", formatAge(fix.lastTrustedFixAgeSeconds))}
+        ${popupRow("DR distance since GPS", formatDistance(fix.distanceFromLastTrustedFixMeters))}
+        ${popupRow("STW / heading", `${formatKnotsFromMps(fix.stwMps)} / ${formatDegrees(fix.headingTrueDegrees)}`)}
+        ${popupRow("SOG / COG", `${formatKnotsFromMps(fix.sogMps)} / ${formatDegrees(fix.cogTrueDegrees)}`)}
+        ${popupRow("Tide set / drift", `${formatDegrees(fix.currentSetTrueDegrees)} / ${formatKnotsFromMps(fix.currentDriftMps)}`)}
+      </dl>
+    </div>
+  `;
+}
+
+function plotFixTitle(fix) {
+  if (fix.trust === "lost" || fix.plotType === "gps-lost") return "Estimated position";
+  if (fix.plotType === "timed" || fix.automatic) return "Timed plot fix";
+  return "Manual plot fix";
 }
 
 function addTrackLine(points, options) {
@@ -755,6 +824,7 @@ function renderSummary(analysis) {
     ["Min depth", formatNumber(summary.minDepthMeters, 1, " m")],
     ["Points", `${summary.trackPoints || 0} (${analysis.track?.length || 0} plotted)`],
     ["DR track", drTrackSummary(analysis.drTracks)],
+    ["DR fixes", drPlotFixSummary(analysis.drPlotFixes)],
     ["Snapshots", String(summary.snapshotCount || 0)],
     ["Start", summary.startReason || "—"],
     ["Stop", summary.stopReason || "—"],
@@ -778,6 +848,13 @@ function drTrackSummary(drTracks) {
   const operational = drTracks.original?.operational || (drTracks.operational || []).length;
   const jumps = (drTracks.recoveryJumps || []).length;
   return jumps ? `${operational} points · ${jumps} jump${jumps === 1 ? "" : "s"} · ${source}` : `${operational} points · ${source}`;
+}
+
+function drPlotFixSummary(drPlotFixes) {
+  const count = (drPlotFixes?.plotFixes || []).length;
+  if (!count) return "—";
+  const source = drPlotFixes.source === "bundle" ? "bundle" : "capture";
+  return `${count} fix${count === 1 ? "" : "es"} · ${source}`;
 }
 
 function gpxUrl(kind, fileName) {
@@ -816,6 +893,53 @@ function formatDateTime(value) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatTime(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "—";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatPosition(point) {
+  const lat = Number(point?.lat);
+  const lon = Number(point?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return "n/a";
+  return `${Math.abs(lat).toFixed(5)}°${lat >= 0 ? "N" : "S"}, ${Math.abs(lon).toFixed(5)}°${lon >= 0 ? "E" : "W"}`;
+}
+
+function formatMeters(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${Math.round(number)} m` : "n/a";
+}
+
+function formatDistance(value) {
+  const meters = Number(value);
+  if (!Number.isFinite(meters)) return "n/a";
+  if (meters < 1000) return `${Math.round(meters)} m`;
+  return `${(meters / 1852).toFixed(meters < 3704 ? 1 : 0)} miles`;
+}
+
+function formatAge(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) return "n/a";
+  if (seconds < 90) return `${Math.round(seconds)} s`;
+  if (seconds < 7200) return `${Math.round(seconds / 60)} min`;
+  return `${(seconds / 3600).toFixed(1)} h`;
+}
+
+function formatKnotsFromMps(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${(number * 1.9438444924406046).toFixed(1)} kn` : "n/a";
+}
+
+function formatDegrees(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${Math.round(number)} deg` : "n/a";
+}
+
+function popupRow(label, value) {
+  return `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`;
 }
 
 function formatDuration(seconds) {
@@ -922,6 +1046,12 @@ elements.toggleDrTrack.addEventListener("click", () => {
   drTrackVisible = !drTrackVisible;
   elements.toggleDrTrack.setAttribute("aria-pressed", String(drTrackVisible));
   renderDrTracks();
+});
+elements.toggleDrFixes.addEventListener("click", () => {
+  if (!hasDrPlotFixes(currentAnalysis?.drPlotFixes)) return;
+  drFixesVisible = !drFixesVisible;
+  elements.toggleDrFixes.setAttribute("aria-pressed", String(drFixesVisible));
+  renderDrPlotFixes();
 });
 for (const tab of elements.fileTabs) {
   tab.addEventListener("click", () => loadFiles(tab.dataset.kind || "voyages"));

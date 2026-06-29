@@ -10,6 +10,11 @@ exported as GPX 1.1, downloaded, and summarised.
 Version `0.5.3` doubles the main plotted voyage track line thickness for easier
 viewing.
 
+Version `0.5.7` adds a **DR Fixes** overlay for voyage bundles that contain
+`tracks/dr-plot-fixes.json`. The overlay shows archived timed, manual, and
+GPS-lost navigator plot fixes with the same square/triangle symbols and popup
+details used by AJRM Marine DR Plotter.
+
 Version `0.1.17` adds a **DR Track** overlay for voyage bundles that contain
 `tracks/dr-track.jsonl`. The overlay can show the recorded GPS comparison,
 operational dead-reckoning track, independent DR where relevant, and highlighted
