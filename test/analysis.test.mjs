@@ -330,6 +330,7 @@ test("web app exposes DR plot-fix overlay controls", async () => {
   assert.match(app, /className: "plot-fix-label-marker"/);
   assert.match(app, /iconSize: \[28, 28\]/);
   assert.match(app, /iconAnchor: \[14, 14\]/);
+  assert.match(app, /if \(fix\.plotType === "gps-return"\) return "GPS fix"/);
   assert.match(css, /\.plot-fix-symbol-marker\.estimated-position \.plot-fix-symbol/);
 });
 

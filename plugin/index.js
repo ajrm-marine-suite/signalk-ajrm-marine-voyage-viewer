@@ -707,7 +707,7 @@ function normalizeDrPlotFix(value) {
     lat,
     lon,
     automatic: value.automatic === true,
-    plotType: ["manual", "timed", "gps-lost", "observed-fix"].includes(value.plotType) ? value.plotType : null,
+    plotType: ["manual", "timed", "gps-lost", "gps-return", "observed-fix"].includes(value.plotType) ? value.plotType : null,
     note: stringOrNull(value.note),
     trust: stringOrNull(value.trust),
     drSource: stringOrNull(value.drSource),

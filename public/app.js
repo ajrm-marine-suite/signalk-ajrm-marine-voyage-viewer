@@ -788,6 +788,7 @@ function plotFixPopupHtml(fix) {
 
 function plotFixTitle(fix) {
   if (fix.trust === "lost" || fix.plotType === "gps-lost") return "Estimated position";
+  if (fix.plotType === "gps-return") return "GPS fix";
   if (fix.plotType === "observed-fix") return "Observed fix";
   if (fix.plotType === "timed" || fix.automatic) return "Timed plot fix";
   return "Manual plot fix";

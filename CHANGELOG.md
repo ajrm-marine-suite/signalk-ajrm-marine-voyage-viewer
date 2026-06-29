@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.10
+
+- Display archived GPS-return DR plot fixes as GPS fixes in DR Fixes popups.
+
 ## 0.5.9
 
 - Render archived DR plot-fix symbols and time labels as separate Leaflet
