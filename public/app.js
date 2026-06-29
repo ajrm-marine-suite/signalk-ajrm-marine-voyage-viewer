@@ -747,7 +747,11 @@ function renderDrPlotFixes() {
 
 function plotFixMarkerClass(fix) {
   const classes = [fix.plotType || (fix.automatic ? "timed" : "manual")];
-  classes.push(fix.trust === "lost" || fix.plotType === "gps-lost" ? "estimated-position" : "electronic-fix");
+  if (fix.plotType === "observed-fix") {
+    classes.push("observed-fix");
+  } else {
+    classes.push(fix.trust === "lost" || fix.plotType === "gps-lost" ? "estimated-position" : "electronic-fix");
+  }
   return classes.join(" ");
 }
 
@@ -757,6 +761,7 @@ function plotFixPopupHtml(fix) {
       <h3>${escapeHtml(plotFixTitle(fix))} ${escapeHtml(formatTime(fix.timestamp))}</h3>
       <dl>
         ${popupRow("Position", formatPosition(fix))}
+        ${fix.note ? popupRow("Note", fix.note) : ""}
         ${popupRow("GPS status", fix.trust ? fix.trust.toUpperCase() : "n/a")}
         ${popupRow("DR source", fix.drSource || "n/a")}
         ${popupRow("Uncertainty", formatMeters(fix.uncertaintyRadiusMeters))}
@@ -772,6 +777,7 @@ function plotFixPopupHtml(fix) {
 
 function plotFixTitle(fix) {
   if (fix.trust === "lost" || fix.plotType === "gps-lost") return "Estimated position";
+  if (fix.plotType === "observed-fix") return "Observed fix";
   if (fix.plotType === "timed" || fix.automatic) return "Timed plot fix";
   return "Manual plot fix";
 }

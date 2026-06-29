@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.8
+
+- Display archived observed fixes from DR Plotter as dot-in-circle symbols with
+  their notes in DR Fixes popups.
+
 ## 0.5.7
 
 - Read bundled `tracks/dr-plot-fixes.json` files from AJRM Marine Capture

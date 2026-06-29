@@ -524,6 +524,15 @@ h2 {
   border-radius: 2px;
 }
 
+.plot-fix-marker.observed-fix .plot-fix-symbol {
+  border-color: #16a34a;
+  border-radius: 50%;
+}
+
+.plot-fix-marker.observed-fix .plot-fix-symbol::after {
+  background: #14532d;
+}
+
 .plot-fix-marker.estimated-position {
   color: #991b1b;
 }
