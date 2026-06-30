@@ -1,15 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import childProcess from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
+import AdmZip from "adm-zip";
 import {
   _private,
 } from "../plugin/index.js";
-
-const execFile = promisify(childProcess.execFile);
 
 test("track distance uses nautical miles", () => {
   const nm = _private.trackDistanceNm([
@@ -86,7 +83,7 @@ test("voyage list includes comment from bundle index", async () => {
     }),
   );
   const zipPath = path.join(dir, "voyage-20260622T195747Z.zip");
-  await execFile("zip", ["-q", "-j", zipPath, path.join(bundleDir, "index.json")]);
+  await writeZip(zipPath, bundleDir, ["index.json"]);
 
   const voyages = await _private.listVoyages(dir);
   assert.equal(voyages.length, 1);
@@ -124,7 +121,7 @@ test("analyses reference-mode voyage bundles from AJRM Marine Logger files", asy
     }),
   );
   const zipPath = path.join(dir, "voyage-20260622T120000Z.zip");
-  await execFile("zip", ["-q", "-j", zipPath, path.join(bundleDir, "index.json")]);
+  await writeZip(zipPath, bundleDir, ["index.json"]);
 
   const analysis = await _private.analyseVoyage(zipPath, {
     maxTrackPoints: 100,
@@ -183,7 +180,7 @@ test("analyses bundled DR track overlay samples", async () => {
     }),
   );
   const zipPath = path.join(dir, "voyage-20260622T120000Z.zip");
-  await execFile("zip", ["-q", "-r", zipPath, "index.json", "tracks"], { cwd: bundleDir });
+  await writeZip(zipPath, bundleDir, ["index.json", "tracks/dr-track.jsonl"]);
 
   const analysis = await _private.analyseVoyage(zipPath, {
     maxTrackPoints: 100,
@@ -239,7 +236,7 @@ test("analyses bundled DR plot fixes", async () => {
     }),
   );
   const zipPath = path.join(dir, "voyage-20260622T120000Z.zip");
-  await execFile("zip", ["-q", "-r", zipPath, "index.json", "tracks"], { cwd: bundleDir });
+  await writeZip(zipPath, bundleDir, ["index.json", "tracks/dr-plot-fixes.json"]);
 
   const analysis = await _private.analyseVoyage(zipPath, {
     maxTrackPoints: 100,
@@ -356,4 +353,14 @@ function captureRecord(timestamp, latitude, longitude, sogKnots) {
       ],
     },
   };
+}
+
+async function writeZip(zipPath, rootDir, relativePaths) {
+  const zip = new AdmZip();
+  for (const relativePath of relativePaths) {
+    const zipPathName = relativePath.split(path.sep).join("/");
+    const data = await fs.readFile(path.join(rootDir, relativePath));
+    zip.addFile(zipPathName, data);
+  }
+  zip.writeZip(zipPath);
 }

@@ -1,11 +1,12 @@
 "use strict";
 
-const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
+const { Readable } = require("node:stream");
 const zlib = require("node:zlib");
+const AdmZip = require("adm-zip");
 const packageInfo = require("../package.json");
 
 const MPS_TO_KNOTS = 1.9438444924406046;
@@ -969,21 +970,14 @@ async function readZipJson(zipPath, innerPath) {
 }
 
 async function readCaptureLines(zipPath, innerPath, onRecord) {
-  const unzip = childProcess.spawn("unzip", ["-p", zipPath, innerPath], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stderr = "";
-  unzip.stderr.on("data", (chunk) => {
-    stderr += chunk.toString();
-  });
-  const closePromise = waitForProcess(unzip, () => stderr);
-  const stream = innerPath.endsWith(".gz") ? unzip.stdout.pipe(zlib.createGunzip()) : unzip.stdout;
+  const buffer = readZipEntryBuffer(zipPath, innerPath);
+  const input = Readable.from(buffer);
+  const stream = innerPath.endsWith(".gz") ? input.pipe(zlib.createGunzip()) : input;
   const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
   for await (const line of lines) {
     if (!line.trim()) continue;
     onRecord(JSON.parse(line));
   }
-  await closePromise;
 }
 
 async function readRecordingLines(recordingPath, onRecord) {
@@ -1005,39 +999,16 @@ async function sendGpx(res, analysis, fallbackFile) {
 }
 
 function readZipEntryText(zipPath, innerPath) {
-  return new Promise((resolve, reject) => {
-    const unzip = childProcess.spawn("unzip", ["-p", zipPath, innerPath], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const chunks = [];
-    let stderr = "";
-    unzip.stdout.on("data", (chunk) => chunks.push(chunk));
-    unzip.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    unzip.on("error", reject);
-    unzip.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(`unzip failed for ${innerPath}: ${stderr.trim() || code}`));
-        return;
-      }
-      resolve(Buffer.concat(chunks).toString("utf8"));
-    });
-  });
+  return readZipEntryBuffer(zipPath, innerPath).toString("utf8");
 }
 
-function waitForProcess(child, stderr) {
-  return new Promise((resolve, reject) => {
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      const message = typeof stderr === "function" ? stderr() : stderr;
-      reject(new Error(`unzip failed: ${String(message || "").trim() || code}`));
-    });
-  });
+function readZipEntryBuffer(zipPath, innerPath) {
+  const zip = new AdmZip(zipPath);
+  const entry = zip.getEntry(innerPath);
+  if (!entry || entry.isDirectory) {
+    throw new Error(`zip entry not found: ${innerPath}`);
+  }
+  return entry.getData();
 }
 
 async function assertReadableFile(filePath) {

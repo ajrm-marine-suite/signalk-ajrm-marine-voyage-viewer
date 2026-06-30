@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.12
+
+- Replace external `zip`/`unzip` command usage with a pure JavaScript ZIP
+  reader/writer for Voyage Viewer tests and voyage-bundle analysis, so the
+  Signal K plugin CI passes on Windows runners and clean installs do not depend
+  on OS ZIP utilities.
+
 ## 0.5.11
 
 - Add Signal K AppStore relationship metadata for the voyage debug mini-suite:
