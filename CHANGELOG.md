@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.11
+
+- Add Signal K AppStore relationship metadata for the voyage debug mini-suite:
+  Capture and Logger.
+- Add the reusable Signal K plugin CI workflow.
+
 ## 0.5.10
 
 - Display archived GPS-return DR plot fixes as GPS fixes in DR Fixes popups.
