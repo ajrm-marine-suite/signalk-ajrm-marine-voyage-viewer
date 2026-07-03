@@ -132,6 +132,65 @@ test("analyses reference-mode voyage bundles from AJRM Marine Logger files", asy
   assert.ok(analysis.summary.distanceNm > 0.49 && analysis.summary.distanceNm < 0.51);
 });
 
+test("summarises GPS Integrity events from captured Signal K state", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-gps-integrity-"));
+  const logFile = path.join(dir, "capture-2026-06-22T120000Z.jsonl");
+  const records = [
+    captureRecord("2026-06-22T12:00:00.000Z", 56.0, -5.0, 2),
+    gpsIntegrityRecord("2026-06-22T12:00:00.000Z", {
+      trust: "normal",
+      acceptedGps: true,
+      counters: { evaluations: 1, acceptedFixes: 1, rejectedFixes: 0, positionJumps: 0, lostFixes: 0, degradedSignals: 0, drDiscrepancies: 0 },
+    }),
+    captureRecord("2026-06-22T12:01:00.000Z", 56.001, -5.0, 2),
+    gpsIntegrityRecord("2026-06-22T12:01:00.000Z", {
+      trust: "lost",
+      acceptedGps: false,
+      reasons: ["GPS source reports no fix."],
+      gps: { fixValid: false, explicitGpsUnavailable: true, positionAgeSeconds: null },
+      counters: { evaluations: 2, acceptedFixes: 1, rejectedFixes: 0, positionJumps: 0, lostFixes: 1, degradedSignals: 0, drDiscrepancies: 0 },
+      operationalDeadReckoning: { position: { latitude: 56.001, longitude: -5 }, source: "heading-stw-current", uncertaintyRadiusMeters: 40, ageSeconds: 60 },
+    }),
+    gpsIntegrityRecord("2026-06-22T12:03:00.000Z", {
+      trust: "normal",
+      acceptedGps: true,
+      gps: { fixValid: true, positionAgeSeconds: 0 },
+      counters: { evaluations: 3, acceptedFixes: 2, rejectedFixes: 0, positionJumps: 0, lostFixes: 1, degradedSignals: 0, drDiscrepancies: 0 },
+      operationalDeadReckoning: { position: { latitude: 56.003, longitude: -5 }, source: "gps-locked", uncertaintyRadiusMeters: 10, ageSeconds: 0 },
+    }),
+    captureRecord("2026-06-22T12:10:00.000Z", 56.00833, -5.0, 3),
+    gpsIntegrityRecord("2026-06-22T12:10:00.000Z", {
+      trust: "suspect",
+      acceptedGps: false,
+      reasons: ["Position jump implies 486.4 kn over ground."],
+      counters: { evaluations: 4, acceptedFixes: 2, rejectedFixes: 1, positionJumps: 1, lostFixes: 1, degradedSignals: 0, drDiscrepancies: 1 },
+      diagnostics: {
+        contract: "ajrm-marine-gps-integrity-diagnostics",
+        decision: { positionJumpRejected: true, drDiscrepancyActive: true },
+        thresholds: { gpsLostSeconds: 15, warningDrDiscrepancyMeters: 50, alarmDrDiscrepancyMeters: 150 },
+      },
+      operationalDeadReckoning: { position: { latitude: 56.008, longitude: -5 }, source: "gps-locked", uncertaintyRadiusMeters: 75, ageSeconds: 0 },
+      integrityDeadReckoning: { position: { latitude: 56.007, longitude: -5 }, source: "heading-stw-current", uncertaintyRadiusMeters: 95, ageSeconds: 300 },
+    }),
+  ];
+  await fs.writeFile(logFile, records.map((record) => JSON.stringify(record)).join("\n"));
+
+  const analysis = await _private.analyseRecording(logFile, { maxTrackPoints: 100 });
+
+  assert.equal(analysis.gpsIntegrity.samples, 4);
+  assert.equal(analysis.summary.gpsIntegrity.available, true);
+  assert.equal(analysis.summary.gpsIntegrity.lostFixes, 1);
+  assert.equal(analysis.summary.gpsIntegrity.lostPeriods, 1);
+  assert.equal(analysis.summary.gpsIntegrity.totalLostSeconds, 120);
+  assert.equal(analysis.summary.gpsIntegrity.positionJumps, 1);
+  assert.equal(analysis.summary.gpsIntegrity.rejectedFixes, 1);
+  assert.equal(analysis.summary.gpsIntegrity.drDiscrepancies, 1);
+  assert.equal(analysis.summary.gpsIntegrity.maxOperationalUncertaintyMeters, 75);
+  assert.ok(analysis.gpsIntegrity.events.some((event) => event.type === "gps-lost"));
+  assert.ok(analysis.gpsIntegrity.events.some((event) => event.type === "gps-recovered"));
+  assert.ok(analysis.gpsIntegrity.events.some((event) => event.type === "position-jump"));
+});
+
 test("analyses bundled DR track overlay samples", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-dr-track-"));
   const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-dr-track-bundle-"));
@@ -347,6 +406,31 @@ function captureRecord(timestamp, latitude, longitude, sogKnots) {
             {
               path: "navigation.speedOverGround",
               value: sogKnots / 1.9438444924406046,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function gpsIntegrityRecord(timestamp, state) {
+  return {
+    capturedAt: timestamp,
+    delta: {
+      context: "vessels.self",
+      updates: [
+        {
+          timestamp,
+          values: [
+            {
+              path: "plugins.ajrmMarineGpsIntegrity.navigationIntegrity",
+              value: {
+                timestamp,
+                gps: { fixValid: true, positionAgeSeconds: 0, ...(state.gps || {}) },
+                reasons: [],
+                ...state,
+              },
             },
           ],
         },

@@ -421,8 +421,9 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
   const drTracks = (await readVoyageDrTracks(voyagePath, index, maxTrackPoints)) ||
     buildDrTracks(secondPass.drTrackSamples, maxTrackPoints, "capture");
   const drPlotFixes = await readVoyageDrPlotFixes(voyagePath, index);
+  const gpsIntegrity = buildGpsIntegrityAnalysis(secondPass.gpsIntegritySamples);
   const markers = hourlyMarkers(track);
-  const summary = buildSummary(index, track, secondPass, firstPass, ownContext);
+  const summary = buildSummary(index, track, secondPass, firstPass, ownContext, gpsIntegrity);
 
   return {
     id: index.id || path.basename(voyagePath, ".zip"),
@@ -436,6 +437,7 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
     track: thinTrack(track, maxTrackPoints),
     drTracks,
     drPlotFixes,
+    gpsIntegrity,
     originalTrackPoints: track.length,
   };
 }
@@ -450,6 +452,7 @@ async function analyseRecording(recordingPath, { kind = "logs", maxTrackPoints =
   const ownPass = await scanRecordingLines(recordingPath, ownContext);
   const track = sortTrack(ownPass.track);
   const drTracks = buildDrTracks(ownPass.drTrackSamples, maxTrackPoints, "capture");
+  const gpsIntegrity = buildGpsIntegrityAnalysis(ownPass.gpsIntegritySamples);
   const index = {
     id: path.basename(recordingPath).replace(/\.jsonl(\.gz)?$/i, ""),
     startedAt: track[0]?.ts || firstPass.sampleStart || recordingStartedAtFromFileName(path.basename(recordingPath)),
@@ -458,7 +461,7 @@ async function analyseRecording(recordingPath, { kind = "logs", maxTrackPoints =
     stopReason: "",
     snapshotCount: 0,
   };
-  const summary = buildSummary(index, track, ownPass, firstPass, ownContext);
+  const summary = buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity);
   const fileName = path.basename(recordingPath);
   return {
     id: index.id,
@@ -471,6 +474,7 @@ async function analyseRecording(recordingPath, { kind = "logs", maxTrackPoints =
     hourlyMarkers: hourlyMarkers(track),
     track: thinTrack(track, maxTrackPoints),
     drTracks,
+    gpsIntegrity,
     originalTrackPoints: track.length,
   };
 }
@@ -553,6 +557,7 @@ async function scanCaptureSources(captureSources, ownContext, window = null) {
     positionCounts: new Map(),
     track: [],
     drTrackSamples: [],
+    gpsIntegritySamples: [],
     speedSamples: [],
     maxSogKnots: null,
     maxApparentWindKnots: null,
@@ -590,6 +595,7 @@ function emptyScanResult() {
     positionCounts: new Map(),
     track: [],
     drTrackSamples: [],
+    gpsIntegritySamples: [],
     speedSamples: [],
     maxSogKnots: null,
     maxApparentWindKnots: null,
@@ -612,6 +618,8 @@ function scanRecord(record, ownContext, result, window) {
         if (!isInsideWindow(timestamp, window)) continue;
         const sample = normalizeDrTrackSample(value, timestamp);
         if (sample) result.drTrackSamples.push(sample);
+        const integritySample = normalizeGpsIntegritySample(value, timestamp);
+        if (integritySample) result.gpsIntegritySamples.push(integritySample);
       } else if (valuePath === "navigation.position" && isPosition(value)) {
         result.positionCounts.set(context, (result.positionCounts.get(context) || 0) + 1);
         touchSampleTimes(result, timestamp);
@@ -672,6 +680,88 @@ function normalizeDrTrackSample(value, fallbackTimestamp = null) {
     integrity,
     reasons: Array.isArray(state.reasons) ? state.reasons.slice(0, 5) : [],
   };
+}
+
+function normalizeGpsIntegritySample(value, fallbackTimestamp = null) {
+  const state = unwrapValue(value);
+  if (!state || typeof state !== "object") return null;
+  const ts = state.ts || state.timestamp || fallbackTimestamp;
+  if (!ts) return null;
+  const diagnostics = state.diagnostics && typeof state.diagnostics === "object" ? state.diagnostics : {};
+  const operational = state.operationalDeadReckoning || state.deadReckoning || {};
+  const integrity = state.integrityDeadReckoning || {};
+  return {
+    ts,
+    trust: stringOrNull(state.trust) || "unknown",
+    notificationState: stringOrNull(state.notificationState),
+    acceptedGps: state.acceptedGps === true,
+    reasons: Array.isArray(state.reasons) ? state.reasons.map(String).slice(0, 8) : [],
+    counters: normalizeGpsIntegrityCounters(state.counters),
+    gps: {
+      fixValid: state.gps?.fixValid === true,
+      explicitGpsUnavailable: state.gps?.explicitGpsUnavailable === true,
+      positionTimestamp: stringOrNull(state.gps?.positionTimestamp),
+      lastReceivedPositionTimestamp: stringOrNull(state.gps?.lastReceivedPositionTimestamp),
+      positionAgeSeconds: numberOrNull(state.gps?.positionAgeSeconds),
+      hdop: numberOrNull(state.gps?.hdop),
+      satellites: numberOrNull(state.gps?.satellites),
+    },
+    current: {
+      available: state.current?.available === true,
+      source: stringOrNull(state.current?.source),
+      ageSeconds: numberOrNull(state.current?.ageSeconds),
+      driftKnots: numberOrNull(state.current?.driftKnots),
+      setTrueDegrees: numberOrNull(state.current?.setTrueDegrees),
+    },
+    deadReckoning: {
+      operationalSource: stringOrNull(operational.source) || stringOrNull(diagnostics.deadReckoning?.operationalSource),
+      operationalAgeSeconds: numberOrNull(operational.ageSeconds ?? diagnostics.deadReckoning?.operationalAgeSeconds),
+      operationalUncertaintyRadiusMeters: numberOrNull(
+        operational.uncertaintyRadiusMeters ?? diagnostics.deadReckoning?.operationalUncertaintyRadiusMeters,
+      ),
+      integritySource: stringOrNull(integrity.source) || stringOrNull(diagnostics.deadReckoning?.integritySource),
+      integrityAgeSeconds: numberOrNull(integrity.ageSeconds ?? diagnostics.deadReckoning?.integrityAgeSeconds),
+      integrityUncertaintyRadiusMeters: numberOrNull(
+        integrity.uncertaintyRadiusMeters ?? diagnostics.deadReckoning?.integrityUncertaintyRadiusMeters,
+      ),
+    },
+    diagnostics: {
+      contract: stringOrNull(diagnostics.contract),
+      decision: diagnostics.decision && typeof diagnostics.decision === "object"
+        ? {
+            positionJumpRejected: diagnostics.decision.positionJumpRejected === true,
+            degradedSignalActive: diagnostics.decision.degradedSignalActive === true,
+            drDiscrepancyActive: diagnostics.decision.drDiscrepancyActive === true,
+          }
+        : null,
+      thresholds: diagnostics.thresholds && typeof diagnostics.thresholds === "object"
+        ? {
+            gpsLostSeconds: numberOrNull(diagnostics.thresholds.gpsLostSeconds),
+            maxHdop: numberOrNull(diagnostics.thresholds.maxHdop),
+            minSatellites: numberOrNull(diagnostics.thresholds.minSatellites),
+            warningDrDiscrepancyMeters: numberOrNull(diagnostics.thresholds.warningDrDiscrepancyMeters),
+            alarmDrDiscrepancyMeters: numberOrNull(diagnostics.thresholds.alarmDrDiscrepancyMeters),
+          }
+        : null,
+    },
+  };
+}
+
+function normalizeGpsIntegrityCounters(value = {}) {
+  return {
+    evaluations: countOrNull(value.evaluations),
+    acceptedFixes: countOrNull(value.acceptedFixes),
+    rejectedFixes: countOrNull(value.rejectedFixes),
+    positionJumps: countOrNull(value.positionJumps),
+    lostFixes: countOrNull(value.lostFixes),
+    degradedSignals: countOrNull(value.degradedSignals),
+    drDiscrepancies: countOrNull(value.drDiscrepancies),
+  };
+}
+
+function countOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : null;
 }
 
 function normalizeDrPoint(value) {
@@ -803,6 +893,140 @@ function chooseOwnContext(positionCounts) {
   return selected;
 }
 
+function buildGpsIntegrityAnalysis(samples) {
+  const sorted = (Array.isArray(samples) ? samples : [])
+    .filter((sample) => sample?.ts)
+    .sort((left, right) => Date.parse(left.ts) - Date.parse(right.ts));
+  if (!sorted.length) {
+    return {
+      samples: 0,
+      events: [],
+      summary: {
+        available: false,
+      },
+    };
+  }
+
+  const events = [];
+  const finalCounters = sorted[sorted.length - 1].counters || {};
+  let previous = null;
+  let lostStart = null;
+  let lostPeriods = 0;
+  let totalLostSeconds = 0;
+  let longestLostSeconds = 0;
+  let maxPositionAgeSeconds = null;
+  let maxOperationalUncertaintyMeters = null;
+  let maxIntegrityUncertaintyMeters = null;
+
+  for (const sample of sorted) {
+    maxPositionAgeSeconds = maxNumber(maxPositionAgeSeconds, sample.gps?.positionAgeSeconds);
+    maxOperationalUncertaintyMeters = maxNumber(
+      maxOperationalUncertaintyMeters,
+      sample.deadReckoning?.operationalUncertaintyRadiusMeters,
+    );
+    maxIntegrityUncertaintyMeters = maxNumber(
+      maxIntegrityUncertaintyMeters,
+      sample.deadReckoning?.integrityUncertaintyRadiusMeters,
+    );
+
+    const lost = isGpsLostIntegritySample(sample);
+    if (lost && !lostStart) {
+      lostStart = sample.ts;
+      lostPeriods += 1;
+      events.push(gpsIntegrityEvent(sample, "gps-lost", "GPS lost or invalid"));
+    } else if (!lost && lostStart) {
+      const seconds = secondsBetween(lostStart, sample.ts);
+      totalLostSeconds += seconds;
+      longestLostSeconds = Math.max(longestLostSeconds, seconds);
+      events.push(gpsIntegrityEvent(sample, "gps-recovered", "GPS recovered"));
+      lostStart = null;
+    }
+
+    const counterEvents = gpsIntegrityCounterEvents(previous, sample);
+    events.push(...counterEvents);
+    if (previous && sample.trust !== previous.trust) {
+      events.push(gpsIntegrityEvent(sample, "trust-change", `Trust changed to ${sample.trust}`));
+    }
+    previous = sample;
+  }
+
+  if (lostStart) {
+    const seconds = secondsBetween(lostStart, sorted[sorted.length - 1].ts);
+    totalLostSeconds += seconds;
+    longestLostSeconds = Math.max(longestLostSeconds, seconds);
+  }
+
+  return {
+    samples: sorted.length,
+    firstAt: sorted[0].ts,
+    lastAt: sorted[sorted.length - 1].ts,
+    finalTrust: sorted[sorted.length - 1].trust,
+    finalNotificationState: sorted[sorted.length - 1].notificationState,
+    finalCounters,
+    events: events.slice(-250),
+    summary: {
+      available: true,
+      samples: sorted.length,
+      finalTrust: sorted[sorted.length - 1].trust,
+      evaluations: finalCounters.evaluations ?? null,
+      acceptedFixes: finalCounters.acceptedFixes ?? null,
+      rejectedFixes: finalCounters.rejectedFixes ?? null,
+      positionJumps: finalCounters.positionJumps ?? null,
+      lostFixes: finalCounters.lostFixes ?? null,
+      degradedSignals: finalCounters.degradedSignals ?? null,
+      drDiscrepancies: finalCounters.drDiscrepancies ?? null,
+      lostPeriods,
+      totalLostSeconds,
+      longestLostSeconds,
+      maxPositionAgeSeconds,
+      maxOperationalUncertaintyMeters,
+      maxIntegrityUncertaintyMeters,
+      lastReason: sorted[sorted.length - 1].reasons?.[0] || "",
+    },
+  };
+}
+
+function isGpsLostIntegritySample(sample) {
+  return sample?.trust === "lost" || sample?.gps?.fixValid === false;
+}
+
+function gpsIntegrityCounterEvents(previous, sample) {
+  const previousCounters = previous?.counters || {};
+  const currentCounters = sample.counters || {};
+  const definitions = [
+    ["lostFixes", "gps-outage", "GPS outage counted"],
+    ["positionJumps", "position-jump", "GPS position jump rejected"],
+    ["degradedSignals", "weak-signal", "Weak GPS signal counted"],
+    ["drDiscrepancies", "dr-mismatch", "GPS/DR mismatch counted"],
+    ["rejectedFixes", "rejected-fix", "GPS fix rejected"],
+  ];
+  return definitions
+    .filter(([key]) => Number.isFinite(currentCounters[key]) && currentCounters[key] > (previousCounters[key] || 0))
+    .map(([, type, label]) => gpsIntegrityEvent(sample, type, label));
+}
+
+function gpsIntegrityEvent(sample, type, label) {
+  return {
+    ts: sample.ts,
+    type,
+    label,
+    trust: sample.trust,
+    acceptedGps: sample.acceptedGps,
+    reason: sample.reasons?.[0] || "",
+    reasons: sample.reasons || [],
+    counters: sample.counters || {},
+    gps: sample.gps || {},
+    deadReckoning: sample.deadReckoning || {},
+  };
+}
+
+function secondsBetween(start, end) {
+  const startMs = Date.parse(start || "");
+  const endMs = Date.parse(end || "");
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return 0;
+  return Math.max(0, Math.round((endMs - startMs) / 1000));
+}
+
 function sortTrack(track) {
   const sorted = track
     .filter((point) => isFinitePosition(point))
@@ -814,7 +1038,7 @@ function sortTrack(track) {
   return sorted;
 }
 
-function buildSummary(index, track, ownPass, firstPass, ownContext) {
+function buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity = null) {
   const startedAt = index.startedAt || track[0]?.ts || firstPass.sampleStart || null;
   const stoppedAt =
     index.stoppedAt || track[track.length - 1]?.ts || firstPass.sampleEnd || null;
@@ -843,6 +1067,7 @@ function buildSummary(index, track, ownPass, firstPass, ownContext) {
     startReason: index.startReason || "",
     stopReason: index.stopReason || "",
     snapshotCount: Number(index.snapshotCount) || 0,
+    gpsIntegrity: gpsIntegrity?.summary || { available: false },
   };
 }
 
@@ -1157,6 +1382,7 @@ module.exports._private = {
   chooseOwnContext,
   defaultGpxFileName,
   generateGpx,
+  buildGpsIntegrityAnalysis,
   haversineMeters,
   hourlyMarkers,
   listVoyages,

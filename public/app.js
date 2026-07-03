@@ -843,6 +843,10 @@ function renderSummary(analysis) {
     ["Points", `${summary.trackPoints || 0} (${analysis.track?.length || 0} plotted)`],
     ["DR track", drTrackSummary(analysis.drTracks)],
     ["DR fixes", drPlotFixSummary(analysis.drPlotFixes)],
+    ["GPS integrity", gpsIntegritySummary(analysis.gpsIntegrity || summary.gpsIntegrity)],
+    ["GPS outages", gpsOutageSummary(analysis.gpsIntegrity || summary.gpsIntegrity)],
+    ["GPS rejected", gpsRejectedSummary(analysis.gpsIntegrity || summary.gpsIntegrity)],
+    ["GPS/DR mismatch", gpsDrMismatchSummary(analysis.gpsIntegrity || summary.gpsIntegrity)],
     ["Snapshots", String(summary.snapshotCount || 0)],
     ["Start", summary.startReason || "—"],
     ["Stop", summary.stopReason || "—"],
@@ -858,6 +862,50 @@ function renderSummary(analysis) {
       return item;
     }),
   );
+}
+
+function gpsIntegritySummary(gpsIntegrity) {
+  const summary = gpsIntegrity?.summary || gpsIntegrity || {};
+  if (!summary.available) return "—";
+  const trust = summary.finalTrust ? titleCase(summary.finalTrust) : "Unknown";
+  const evaluations = Number.isFinite(summary.evaluations) ? `${summary.evaluations} evals` : `${summary.samples || 0} samples`;
+  const lastReason = summary.finalTrust && summary.finalTrust !== "normal" && summary.lastReason
+    ? ` · ${summary.lastReason}`
+    : "";
+  return `${trust} · ${evaluations}${lastReason}`;
+}
+
+function gpsOutageSummary(gpsIntegrity) {
+  const summary = gpsIntegrity?.summary || gpsIntegrity || {};
+  if (!summary.available) return "—";
+  const count = Number.isFinite(summary.lostFixes) ? summary.lostFixes : summary.lostPeriods || 0;
+  if (!count) return "None";
+  return `${count} · ${formatDuration(summary.totalLostSeconds || 0)} total · ${formatDuration(summary.longestLostSeconds || 0)} longest`;
+}
+
+function gpsRejectedSummary(gpsIntegrity) {
+  const summary = gpsIntegrity?.summary || gpsIntegrity || {};
+  if (!summary.available) return "—";
+  const rejected = summary.rejectedFixes || 0;
+  const jumps = summary.positionJumps || 0;
+  if (!rejected && !jumps) return "None";
+  return `${rejected} rejected · ${jumps} jump${jumps === 1 ? "" : "s"}`;
+}
+
+function gpsDrMismatchSummary(gpsIntegrity) {
+  const summary = gpsIntegrity?.summary || gpsIntegrity || {};
+  if (!summary.available) return "—";
+  const mismatches = summary.drDiscrepancies || 0;
+  const uncertainty = Number.isFinite(summary.maxOperationalUncertaintyMeters)
+    ? ` · max DR ${Math.round(summary.maxOperationalUncertaintyMeters)} m`
+    : "";
+  return mismatches ? `${mismatches}${uncertainty}` : `None${uncertainty}`;
+}
+
+function titleCase(value) {
+  return String(value || "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function drTrackSummary(drTracks) {

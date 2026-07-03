@@ -15,6 +15,12 @@ Version `0.5.7` adds a **DR Fixes** overlay for voyage bundles that contain
 GPS-lost navigator plot fixes with the same square/triangle symbols and popup
 details used by AJRM Marine DR Plotter.
 
+Version `0.5.13` summarises captured AJRM Marine GPS Integrity state in the
+voyage Summary. This helps review a day's sailing without live diagnostics:
+final GPS trust, outage count and duration, rejected fixes, position jumps,
+weak-signal events, GPS/DR mismatches, and maximum DR uncertainty are extracted
+from the normal Signal K capture data.
+
 Version `0.1.17` adds a **DR Track** overlay for voyage bundles that contain
 `tracks/dr-track.jsonl`. The overlay can show the recorded GPS comparison,
 operational dead-reckoning track, independent DR where relevant, and highlighted
@@ -86,6 +92,9 @@ elsewhere.
 - Maximum apparent and true wind speed when captured
 - Minimum depth below transducer when captured
 - Track point count and snapshot count
+- GPS Integrity summary when captured: final trust state, evaluations, GPS
+  outages, rejected fixes, position jumps, weak-signal events, GPS/DR mismatch
+  count, and maximum DR uncertainty
 
 ## Notes
 

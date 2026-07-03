@@ -1,6 +1,6 @@
 {
   "name": "signalk-ajrm-marine-voyage-viewer",
-  "version": "0.5.12",
+  "version": "0.5.13",
   "description": "Plots and exports voyage tracks. For replay, load the voyage in AJRM Marine Logger and view it in Display.",
   "main": "plugin/index.js",
   "scripts": {
