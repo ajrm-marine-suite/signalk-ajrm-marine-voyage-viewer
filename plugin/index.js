@@ -22,6 +22,8 @@ const LEGACY_CLIP_DIRECTORY = `${LEGACY_LOG_ROOT}/clips`;
 const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v1";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
+const REVIEW_SCHEMA_VERSION = 2;
+const REVIEW_ENGINE_VERSION = 3;
 const AJRM_MARINE_GPS_INTEGRITY_STATE_PATH = "plugins.ajrmMarineGpsIntegrity.navigationIntegrity";
 const DR_TRACK_RELATIVE_PATH = "tracks/dr-track.jsonl";
 const DR_PLOT_FIXES_RELATIVE_PATH = "tracks/dr-plot-fixes.json";
@@ -366,7 +368,8 @@ async function readFreshPlotCache(sourcePath, source, kind, file, maxTrackPoints
     if (cache.source?.bytes !== source.bytes || cache.source?.mtimeMs !== source.mtimeMs) continue;
     if (Number(cache.options?.maxTrackPoints) !== Number(maxTrackPoints)) continue;
     if (!cache.analysis || typeof cache.analysis !== "object") continue;
-    if (cache.analysis.review?.schemaVersion !== 2) continue;
+    if (cache.analysis.review?.schemaVersion !== REVIEW_SCHEMA_VERSION) continue;
+    if (Number(cache.analysis.review?.engineVersion || 0) < REVIEW_ENGINE_VERSION) continue;
     return {
       ...cache.analysis,
       cache: {
@@ -1322,6 +1325,7 @@ function readVoyageBiteReports(voyagePath) {
       if (!/^system\/bite-reports\/.+\.json$/i.test(entry.entryName)) continue;
       const parsed = JSON.parse(entry.getData().toString("utf8"));
       if (Array.isArray(parsed.reports)) {
+        reports.push(normalizeBiteReport(parsed, entry.entryName));
         for (const report of parsed.reports) reports.push(normalizeBiteReport(report, entry.entryName));
       } else {
         reports.push(normalizeBiteReport(parsed, entry.entryName));
@@ -1346,6 +1350,8 @@ function normalizeBiteReport(report, source) {
     title: stringOrNull(report.title) || stringOrNull(report.name) || stringOrNull(report.scenario) || "BITE test",
     result: stringOrNull(report.result) || (report.ok === true ? "pass" : report.ok === false ? "fail" : "unknown"),
     summary: stringOrNull(report.summary),
+    startedAt: stringOrNull(report.startedAt),
+    finishedAt: stringOrNull(report.finishedAt),
     failedAssertions,
   };
 }
@@ -1470,7 +1476,8 @@ function buildVoyageReview({
     : voyageStatus;
   const headline = reviewHeadline({ softwareStatus, voyageStatus, status });
   return {
-    schemaVersion: 2,
+    schemaVersion: REVIEW_SCHEMA_VERSION,
+    engineVersion: REVIEW_ENGINE_VERSION,
     generatedAt: new Date().toISOString(),
     status,
     softwareStatus,
@@ -1483,8 +1490,12 @@ function buildVoyageReview({
 }
 
 function summarizeBiteReports(reports) {
-  const usefulReports = reports.filter((report) => report.scenario !== "run-all");
-  const source = usefulReports.length ? usefulReports : reports;
+  const latestRun = latestBiteRunAllReport(reports);
+  const latestRunReports = latestRun ? biteReportsForRun(reports, latestRun) : [];
+  const usefulReports = latestRunReports.length
+    ? latestRunReports.filter((report) => report.scenario !== "run-all")
+    : reports.filter((report) => report.scenario !== "run-all");
+  const source = usefulReports.length ? dedupeBiteReports(usefulReports) : latestRun ? [latestRun] : dedupeBiteReports(reports);
   const failedTests = source.filter((report) => reviewBiteFailed(report));
   const passed = source.filter((report) => reviewBitePassed(report)).length;
   return {
@@ -1499,6 +1510,44 @@ function summarizeBiteReports(reports) {
       failedAssertions: report.failedAssertions,
     })),
   };
+}
+
+function dedupeBiteReports(reports) {
+  const byScenario = new Map();
+  for (const report of reports) {
+    const key = report.scenario || report.title || report.source || "unknown";
+    const existing = byScenario.get(key);
+    if (!existing || biteReportSortTime(report) >= biteReportSortTime(existing)) {
+      byScenario.set(key, report);
+    }
+  }
+  return [...byScenario.values()].sort((a, b) => biteReportSortTime(a) - biteReportSortTime(b));
+}
+
+function latestBiteRunAllReport(reports) {
+  return reports
+    .filter((report) => report.scenario === "run-all")
+    .sort((a, b) => biteReportSortTime(b) - biteReportSortTime(a))[0] || null;
+}
+
+function biteReportsForRun(reports, runAllReport) {
+  const started = Date.parse(runAllReport.startedAt || "");
+  const finished = Date.parse(runAllReport.finishedAt || "");
+  if (!Number.isFinite(started) || !Number.isFinite(finished)) return [];
+  return reports.filter((report) => {
+    const time = biteReportSortTime(report);
+    return Number.isFinite(time) && time >= started - 1000 && time <= finished + 1000;
+  });
+}
+
+function biteReportSortTime(report) {
+  const finished = Date.parse(report.finishedAt || "");
+  if (Number.isFinite(finished)) return finished;
+  const started = Date.parse(report.startedAt || "");
+  if (Number.isFinite(started)) return started;
+  const sourceMatch = String(report.source || "").match(/(\d{4}-\d{2}-\d{2}T\d{6})/);
+  if (!sourceMatch) return 0;
+  return Date.parse(sourceMatch[1].replace(/T(\d{2})(\d{2})(\d{2})/, "T$1:$2:$3"));
 }
 
 function reviewBiteFailed(report) {

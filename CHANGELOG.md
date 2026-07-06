@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.23
+
+- Score Voyage Review BITE results from the latest run-all report only, so
+  older failed BITE reports retained in the voyage bundle do not turn a later
+  passing run red.
+- Deduplicate individual BITE reports that also appear inside the run-all
+  report, and invalidate stale review caches when the review engine changes.
+
 ## 0.5.22
 
 - Download selected voyage/log files through an authenticated browser `fetch`

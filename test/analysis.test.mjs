@@ -328,6 +328,98 @@ test("builds English voyage review with separate software and voyage-data lights
   assert.ok(analysis.review.findings.some((finding) => finding.category === "voyage"));
 });
 
+test("voyage review scores the latest BITE run instead of stale bundled failures", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-latest-bite-"));
+  const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-latest-bite-bundle-"));
+  const logFile = path.join(dir, "capture-2026-07-06T200000Z.jsonl");
+  const records = [
+    captureRecord("2026-07-06T20:19:29.000Z", 56.0, -5.0, 2),
+    captureRecord("2026-07-06T20:24:01.000Z", 56.01, -5.0, 2),
+  ];
+  await fs.writeFile(logFile, records.map((record) => JSON.stringify(record)).join("\n"));
+  await fs.mkdir(path.join(bundleDir, "system", "bite-reports"), { recursive: true });
+  const biteReports = [
+    [
+      "2026-07-06T191000000Z-0001-old-failure.json",
+      {
+        scenario: "audio-output-summary",
+        result: "fail",
+        startedAt: "2026-07-06T19:10:00.000Z",
+        finishedAt: "2026-07-06T19:10:10.000Z",
+        summary: "Old audio failure.",
+        assertions: [{ id: "summary-audio-completed", pass: false }],
+      },
+    ],
+    [
+      "2026-07-06T191100000Z-0002-run-all-fail.json",
+      {
+        scenario: "run-all",
+        result: "fail",
+        startedAt: "2026-07-06T19:09:00.000Z",
+        finishedAt: "2026-07-06T19:11:00.000Z",
+        summary: "1 of 79 BITE tests failed.",
+      },
+    ],
+    [
+      "2026-07-06T202300000Z-0003-current-check-pass.json",
+      {
+        scenario: "traffic-audio-chain",
+        result: "pass",
+        startedAt: "2026-07-06T20:23:00.000Z",
+        finishedAt: "2026-07-06T20:23:10.000Z",
+        summary: "Current traffic audio check passed.",
+        assertions: [{ id: "audio-accepted", pass: true }],
+      },
+    ],
+    [
+      "2026-07-06T202401000Z-0004-run-all-pass.json",
+      {
+        scenario: "run-all",
+        result: "pass",
+        startedAt: "2026-07-06T20:19:22.000Z",
+        finishedAt: "2026-07-06T20:24:01.000Z",
+        summary: "79 BITE tests passed.",
+        reports: [
+          {
+            scenario: "traffic-audio-chain",
+            result: "pass",
+            startedAt: "2026-07-06T20:23:00.000Z",
+            finishedAt: "2026-07-06T20:23:10.000Z",
+            summary: "Current traffic audio check passed.",
+            assertions: [{ id: "audio-accepted", pass: true }],
+          },
+        ],
+      },
+    ],
+  ];
+  for (const [name, report] of biteReports) {
+    await fs.writeFile(path.join(bundleDir, "system", "bite-reports", name), JSON.stringify(report));
+  }
+  await fs.writeFile(
+    path.join(bundleDir, "index.json"),
+    JSON.stringify({
+      id: "voyage-20260706T201929Z",
+      comment: "Latest BITE review",
+      startedAt: "2026-07-06T20:19:29.000Z",
+      stoppedAt: "2026-07-06T20:24:01.000Z",
+      captureReferences: [{ fileName: path.basename(logFile), sourcePath: logFile }],
+    }),
+  );
+  const zipPath = path.join(dir, "voyage-20260706T201929Z.zip");
+  await writeZip(zipPath, bundleDir, ["index.json", ...biteReports.map(([name]) => `system/bite-reports/${name}`)]);
+
+  const analysis = await _private.analyseVoyage(zipPath, {
+    maxTrackPoints: 100,
+    options: { logDirectory: dir },
+  });
+
+  assert.equal(analysis.review.softwareStatus, "green");
+  assert.equal(analysis.review.bite.failed, 0);
+  assert.equal(analysis.review.bite.total, 1);
+  assert.equal(analysis.review.bite.passed, 1);
+  assert.ok(!analysis.review.findings.some((finding) => finding.category === "software" && finding.level === "red"));
+});
+
 test("analyses bundled DR track overlay samples", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-dr-track-"));
   const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-dr-track-bundle-"));
