@@ -101,13 +101,24 @@ module.exports = function ajrmMarineVoyageViewer(app) {
     });
 
     router.get("/files/:kind/:file/download", async (req, res) => {
+      let captureDownload = null;
       try {
         const kind = safeFileKind(req.params.kind);
         const file = safeFileNameForKind(kind, req.params.file);
+        if (kind === "voyages") {
+          captureDownload = await prepareCaptureVoyageDownload(app, file);
+          if (captureDownload) {
+            res.download(captureDownload.path, captureDownload.fileName, () => {
+              captureDownload.cleanup().catch(() => {});
+            });
+            return;
+          }
+        }
         const filePath = path.join(directoryForKind(kind, options), file);
         await assertReadableFile(filePath);
         res.download(filePath, file);
       } catch (error) {
+        if (captureDownload) captureDownload.cleanup().catch(() => {});
         app.error(`[${plugin.id}] download failed: ${error.stack || error.message}`);
         res.status(500).json({ ok: false, error: error.message });
       }
@@ -173,6 +184,16 @@ module.exports = function ajrmMarineVoyageViewer(app) {
 
   return plugin;
 };
+
+async function prepareCaptureVoyageDownload(app, fileName) {
+  const api = app.ajrmMarineCaptureApi;
+  if (!api || typeof api.prepareVoyageDownload !== "function") return null;
+  try {
+    return await api.prepareVoyageDownload(fileName);
+  } catch {
+    return null;
+  }
+}
 
 function normalizeOptions(value = {}) {
   return {

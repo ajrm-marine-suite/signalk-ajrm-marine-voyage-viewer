@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.19
+
+- When AJRM Marine Capture is installed, use Capture's canonical portable
+  voyage download builder for voyage ZIP downloads so raw capture logs and BITE
+  reports are not missed.
+- Keep a local ZIP fallback for standalone Voyage Viewer installs.
+
 ## 0.5.12
 
 - Replace external `zip`/`unzip` command usage with a pure JavaScript ZIP

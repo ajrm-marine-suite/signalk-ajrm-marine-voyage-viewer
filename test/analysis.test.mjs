@@ -8,6 +8,14 @@ import {
   _private,
 } from "../plugin/index.js";
 
+test("voyage downloads defer to Capture portable bundle builder when available", async () => {
+  const source = await fs.readFile(new URL("../plugin/index.js", import.meta.url), "utf8");
+  assert.match(source, /prepareCaptureVoyageDownload\(app, file\)/);
+  assert.match(source, /api\.prepareVoyageDownload\(fileName\)/);
+  assert.match(source, /kind === "voyages"/);
+  assert.match(source, /captureDownload\.cleanup\(\)/);
+});
+
 test("track distance uses nautical miles", () => {
   const nm = _private.trackDistanceNm([
     { lat: 56.0, lon: -5.0, ts: "2026-06-22T00:00:00.000Z" },
