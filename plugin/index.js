@@ -1163,6 +1163,9 @@ function buildVoyageReview({
   }
 
   if (bite.available) {
+    paragraphs.push(
+      "This bundle includes AJRM Marine Console BITE output. BITE scenarios deliberately inject test targets, GPS faults, and alert-chain failures so Voyage Viewer can confirm the suite detects and reports them; treat BITE failures as test evidence unless the report says the software chain itself failed to react correctly.",
+    );
     if (bite.failed > 0) {
       const failedNames = bite.failedTests
         .map((test) => test.title || test.scenario)

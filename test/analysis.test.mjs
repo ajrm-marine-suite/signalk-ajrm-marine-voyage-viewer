@@ -247,6 +247,7 @@ test("builds English voyage review with separate software and voyage-data lights
   assert.equal(analysis.review.bite.failed, 1);
   assert.match(analysis.review.headline, /Software RED, voyage data AMBER/);
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("Review test")));
+  assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("deliberately inject")));
   assert.ok(analysis.review.findings.some((finding) => finding.category === "software" && finding.level === "red"));
   assert.ok(analysis.review.findings.some((finding) => finding.category === "voyage"));
 });
