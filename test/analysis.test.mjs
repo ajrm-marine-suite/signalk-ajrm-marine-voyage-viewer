@@ -191,6 +191,66 @@ test("summarises GPS Integrity events from captured Signal K state", async () =>
   assert.ok(analysis.gpsIntegrity.events.some((event) => event.type === "position-jump"));
 });
 
+test("builds English voyage review with separate software and voyage-data lights", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-review-"));
+  const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-review-bundle-"));
+  const logFile = path.join(dir, "capture-2026-06-22T120000Z.jsonl");
+  const records = [
+    captureRecord("2026-06-22T12:00:00.000Z", 56.0, -5.0, 2),
+    gpsIntegrityRecord("2026-06-22T12:00:00.000Z", {
+      trust: "normal",
+      acceptedGps: true,
+      counters: { evaluations: 1, acceptedFixes: 1, rejectedFixes: 0, positionJumps: 0, lostFixes: 0, degradedSignals: 0, drDiscrepancies: 0 },
+    }),
+    captureRecord("2026-06-22T12:10:00.000Z", 56.00833, -5.0, 3),
+  ];
+  await fs.writeFile(logFile, records.map((record) => JSON.stringify(record)).join("\n"));
+  await fs.mkdir(path.join(bundleDir, "system", "bite-reports"), { recursive: true });
+  await fs.writeFile(
+    path.join(bundleDir, "system", "bite-reports", "run-all.json"),
+    JSON.stringify({
+      reports: [
+        {
+          scenario: "traffic-audio-chain",
+          title: "Traffic audio chain",
+          result: "fail",
+          summary: "Traffic audio chain failed.",
+          assertions: [
+            { id: "traffic-alert", pass: true },
+            { id: "audio-accepted", pass: false },
+          ],
+        },
+      ],
+    }),
+  );
+  await fs.writeFile(
+    path.join(bundleDir, "index.json"),
+    JSON.stringify({
+      id: "voyage-20260622T120000Z",
+      comment: "Review test",
+      startedAt: "2026-06-22T12:00:00.000Z",
+      stoppedAt: "2026-06-22T12:10:00.000Z",
+      captureFiles: [],
+      captureReferences: [{ fileName: path.basename(logFile), sourcePath: logFile }],
+    }),
+  );
+  const zipPath = path.join(dir, "voyage-20260622T120000Z.zip");
+  await writeZip(zipPath, bundleDir, ["index.json", "system/bite-reports/run-all.json"]);
+
+  const analysis = await _private.analyseVoyage(zipPath, {
+    maxTrackPoints: 100,
+    options: { logDirectory: dir },
+  });
+
+  assert.equal(analysis.review.softwareStatus, "red");
+  assert.equal(analysis.review.voyageStatus, "amber");
+  assert.equal(analysis.review.bite.failed, 1);
+  assert.match(analysis.review.headline, /Software RED, voyage data AMBER/);
+  assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("Review test")));
+  assert.ok(analysis.review.findings.some((finding) => finding.category === "software" && finding.level === "red"));
+  assert.ok(analysis.review.findings.some((finding) => finding.category === "voyage"));
+});
+
 test("analyses bundled DR track overlay samples", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-dr-track-"));
   const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-dr-track-bundle-"));
@@ -381,7 +441,12 @@ test("web app exposes DR plot-fix overlay controls", async () => {
   const css = await fs.readFile(path.join(process.cwd(), "public", "styles.css"), "utf8");
 
   assert.match(html, /id="toggleDrFixes"/);
+  assert.match(html, /id="reviewSelected"/);
+  assert.match(html, /id="reviewPanel"/);
   assert.match(app, /function renderDrPlotFixes/);
+  assert.match(app, /function renderReview/);
+  assert.match(app, /reviewLight\("Software"/);
+  assert.match(app, /reviewLight\("Voyage data"/);
   assert.match(app, /className: `plot-fix-symbol-marker/);
   assert.match(app, /className: "plot-fix-label-marker"/);
   assert.match(app, /iconSize: \[28, 28\]/);

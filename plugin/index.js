@@ -318,6 +318,7 @@ async function readFreshPlotCache(sourcePath, source, kind, file, maxTrackPoints
     if (cache.source?.bytes !== source.bytes || cache.source?.mtimeMs !== source.mtimeMs) continue;
     if (Number(cache.options?.maxTrackPoints) !== Number(maxTrackPoints)) continue;
     if (!cache.analysis || typeof cache.analysis !== "object") continue;
+    if (!cache.analysis.review) continue;
     return {
       ...cache.analysis,
       cache: {
@@ -424,6 +425,16 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
   const gpsIntegrity = buildGpsIntegrityAnalysis(secondPass.gpsIntegritySamples);
   const markers = hourlyMarkers(track);
   const summary = buildSummary(index, track, secondPass, firstPass, ownContext, gpsIntegrity);
+  const biteReports = readVoyageBiteReports(voyagePath);
+  const review = buildVoyageReview({
+    index,
+    track,
+    summary,
+    gpsIntegrity,
+    drTracks,
+    drPlotFixes,
+    biteReports,
+  });
 
   return {
     id: index.id || path.basename(voyagePath, ".zip"),
@@ -433,6 +444,7 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
     gpxUrl: `/plugins/signalk-ajrm-marine-voyage-viewer/files/voyages/${encodeURIComponent(path.basename(voyagePath))}/track.gpx`,
     ownContext,
     summary,
+    review,
     hourlyMarkers: markers,
     track: thinTrack(track, maxTrackPoints),
     drTracks,
@@ -462,6 +474,15 @@ async function analyseRecording(recordingPath, { kind = "logs", maxTrackPoints =
     snapshotCount: 0,
   };
   const summary = buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity);
+  const review = buildVoyageReview({
+    index,
+    track,
+    summary,
+    gpsIntegrity,
+    drTracks,
+    drPlotFixes: null,
+    biteReports: [],
+  });
   const fileName = path.basename(recordingPath);
   return {
     id: index.id,
@@ -471,6 +492,7 @@ async function analyseRecording(recordingPath, { kind = "logs", maxTrackPoints =
     gpxUrl: `/plugins/signalk-ajrm-marine-voyage-viewer/files/${encodeURIComponent(kind)}/${encodeURIComponent(fileName)}/track.gpx`,
     ownContext,
     summary,
+    review,
     hourlyMarkers: hourlyMarkers(track),
     track: thinTrack(track, maxTrackPoints),
     drTracks,
@@ -1069,6 +1091,288 @@ function buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity
     snapshotCount: Number(index.snapshotCount) || 0,
     gpsIntegrity: gpsIntegrity?.summary || { available: false },
   };
+}
+
+function readVoyageBiteReports(voyagePath) {
+  try {
+    const zip = new AdmZip(voyagePath);
+    const reports = [];
+    for (const entry of zip.getEntries()) {
+      if (entry.isDirectory) continue;
+      if (!/^system\/bite-reports\/.+\.json$/i.test(entry.entryName)) continue;
+      const parsed = JSON.parse(entry.getData().toString("utf8"));
+      if (Array.isArray(parsed.reports)) {
+        for (const report of parsed.reports) reports.push(normalizeBiteReport(report, entry.entryName));
+      } else {
+        reports.push(normalizeBiteReport(parsed, entry.entryName));
+      }
+    }
+    return reports.filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function normalizeBiteReport(report, source) {
+  if (!report || typeof report !== "object") return null;
+  const assertions = Array.isArray(report.assertions) ? report.assertions : [];
+  const failedAssertions = assertions
+    .filter((assertion) => assertion && assertion.pass === false)
+    .map((assertion) => String(assertion.id || assertion.message || "failed assertion"));
+  return {
+    source,
+    runId: stringOrNull(report.runId),
+    scenario: stringOrNull(report.scenario) || stringOrNull(report.id) || "unknown",
+    title: stringOrNull(report.title) || stringOrNull(report.name) || stringOrNull(report.scenario) || "BITE test",
+    result: stringOrNull(report.result) || (report.ok === true ? "pass" : report.ok === false ? "fail" : "unknown"),
+    summary: stringOrNull(report.summary),
+    failedAssertions,
+  };
+}
+
+function buildVoyageReview({
+  index,
+  track,
+  summary,
+  gpsIntegrity,
+  drTracks,
+  drPlotFixes,
+  biteReports = [],
+}) {
+  const findings = [];
+  const paragraphs = [];
+  const bite = summarizeBiteReports(biteReports);
+  const gps = gpsIntegrity?.summary || {};
+  const distance = Number.isFinite(summary.distanceNm) ? `${summary.distanceNm.toFixed(1)} NM` : "unknown distance";
+  const duration = formatSecondsForReview(summary.durationSeconds);
+  const comment = index.comment ? ` "${index.comment}"` : "";
+
+  paragraphs.push(
+    `Voyage${comment} covered ${distance} over ${duration}. The track contains ${summary.trackPoints || 0} own-vessel GPS positions, with an average speed of ${formatReviewNumber(summary.averageSpeedKnots, 1, " knots")}.`,
+  );
+
+  if (summary.minDepthMeters != null) {
+    paragraphs.push(`Minimum recorded depth was ${formatReviewNumber(summary.minDepthMeters, 1, " meters")}. Maximum recorded SOG was ${formatReviewNumber(summary.maxSogKnots, 1, " knots")}.`);
+  } else {
+    findings.push({
+      category: "voyage",
+      level: "amber",
+      title: "No depth samples found",
+      detail: "The voyage bundle did not include usable depth samples for this review.",
+    });
+  }
+
+  if (bite.available) {
+    if (bite.failed > 0) {
+      const failedNames = bite.failedTests
+        .map((test) => test.title || test.scenario)
+        .filter(Boolean)
+        .slice(0, 5)
+        .join("; ");
+      findings.push({
+        category: "software",
+        level: "red",
+        title: "Built-in test failure",
+        detail: `${bite.failed} of ${bite.total} BITE checks failed${failedNames ? `: ${failedNames}` : ""}. Do not rely on the suite until these safety-chain tests are understood.`,
+      });
+    } else {
+      findings.push({
+        category: "software",
+        level: "green",
+        title: "Built-in tests passed",
+        detail: `${bite.passed} BITE checks were bundled and all passed.`,
+      });
+    }
+  } else {
+    findings.push({
+      category: "software",
+      level: "amber",
+      title: "No BITE report bundled",
+      detail: "This voyage can still be reviewed, but there is no built-in-test evidence for the software chain in this bundle.",
+    });
+  }
+
+  if (gps.available) {
+    paragraphs.push(
+      `GPS Integrity recorded ${gps.evaluations || gps.samples || 0} evaluations. Final trust was ${reviewTrustName(gps.finalTrust)}.`,
+    );
+    addGpsReviewFindings(findings, gps);
+  } else {
+    findings.push({
+      category: "voyage",
+      level: "amber",
+      title: "No GPS Integrity data",
+      detail: "The voyage bundle did not include GPS Integrity state samples, so GPS outages, jumps, and GPS/DR disagreements could not be assessed.",
+    });
+  }
+
+  addDrReviewFindings(findings, drTracks, drPlotFixes);
+  if (!summary.trackPoints) {
+    findings.push({
+      category: "voyage",
+      level: "red",
+      title: "No own-vessel track",
+      detail: "No usable own-vessel GPS positions were found in the recording.",
+    });
+  }
+
+  const softwareStatus = highestReviewLevel(findings.filter((finding) => finding.category === "software"));
+  const voyageStatus = highestReviewLevel(findings.filter((finding) => finding.category !== "software"));
+  const status = highestReviewLevel([{ level: softwareStatus }, { level: voyageStatus }]);
+  const headline = reviewHeadline({ softwareStatus, voyageStatus, status });
+  return {
+    generatedAt: new Date().toISOString(),
+    status,
+    softwareStatus,
+    voyageStatus,
+    headline,
+    paragraphs,
+    findings,
+    bite,
+  };
+}
+
+function summarizeBiteReports(reports) {
+  const usefulReports = reports.filter((report) => report.scenario !== "run-all");
+  const source = usefulReports.length ? usefulReports : reports;
+  const failedTests = source.filter((report) => reviewBiteFailed(report));
+  const passed = source.filter((report) => reviewBitePassed(report)).length;
+  return {
+    available: source.length > 0,
+    total: source.length,
+    passed,
+    failed: failedTests.length,
+    failedTests: failedTests.slice(0, 12).map((report) => ({
+      scenario: report.scenario,
+      title: report.title,
+      summary: report.summary,
+      failedAssertions: report.failedAssertions,
+    })),
+  };
+}
+
+function reviewBiteFailed(report) {
+  return report.result === "fail" || report.result === "failed" || report.result === "red" || report.failedAssertions.length > 0;
+}
+
+function reviewBitePassed(report) {
+  return report.result === "pass" || report.result === "passed" || report.ok === true;
+}
+
+function addGpsReviewFindings(findings, gps) {
+  if (gps.lostFixes || gps.lostPeriods) {
+    findings.push({
+      category: "voyage",
+      level: gps.longestLostSeconds > 60 || gps.totalLostSeconds > 120 ? "red" : "amber",
+      title: "GPS outage detected",
+      detail: `${gps.lostFixes || gps.lostPeriods} GPS outage${(gps.lostFixes || gps.lostPeriods) === 1 ? "" : "s"} were detected, totalling ${formatSecondsForReview(gps.totalLostSeconds || 0)}. Longest outage was ${formatSecondsForReview(gps.longestLostSeconds || 0)}.`,
+    });
+  }
+  if (gps.positionJumps) {
+    findings.push({
+      category: "voyage",
+      level: "amber",
+      title: "GPS position jumps rejected",
+      detail: `${gps.positionJumps} position jump${gps.positionJumps === 1 ? "" : "s"} were detected by GPS Integrity.`,
+    });
+  }
+  if (gps.rejectedFixes) {
+    findings.push({
+      category: "voyage",
+      level: gps.rejectedFixes > 3 ? "red" : "amber",
+      title: "GPS fixes rejected",
+      detail: `${gps.rejectedFixes} GPS fix${gps.rejectedFixes === 1 ? "" : "es"} were rejected before reaching the trusted navigation state.`,
+    });
+  }
+  if (gps.drDiscrepancies) {
+    findings.push({
+      category: "voyage",
+      level: "amber",
+      title: "GPS and dead reckoning disagreed",
+      detail: `${gps.drDiscrepancies} GPS/DR mismatch event${gps.drDiscrepancies === 1 ? "" : "s"} were recorded. Maximum operational DR uncertainty was ${formatReviewNumber(gps.maxOperationalUncertaintyMeters, 0, " meters")}.`,
+    });
+  }
+  if (gps.degradedSignals) {
+    findings.push({
+      category: "voyage",
+      level: "amber",
+      title: "Weak GPS signal detected",
+      detail: `${gps.degradedSignals} weak-signal event${gps.degradedSignals === 1 ? "" : "s"} were recorded.`,
+    });
+  }
+  if (!gps.lostFixes && !gps.positionJumps && !gps.rejectedFixes && !gps.drDiscrepancies && !gps.degradedSignals) {
+    findings.push({
+      category: "voyage",
+      level: "green",
+      title: "GPS Integrity healthy",
+      detail: "No GPS outages, rejected fixes, position jumps, weak-signal events, or GPS/DR mismatches were recorded.",
+    });
+  }
+}
+
+function addDrReviewFindings(findings, drTracks, drPlotFixes) {
+  const jumps = drTracks?.recoveryJumps || [];
+  const fixCount = (drPlotFixes?.plotFixes || []).length;
+  if (jumps.length) {
+    const maxJump = jumps.reduce((max, jump) => Math.max(max, Number(jump.meters) || 0), 0);
+    findings.push({
+      category: "voyage",
+      level: maxJump > 500 ? "red" : "amber",
+      title: "DR recovery jump",
+      detail: `${jumps.length} GPS recovery jump${jumps.length === 1 ? "" : "s"} were recorded. Largest jump was ${formatReviewNumber(maxJump, 0, " meters")}.`,
+    });
+  }
+  if (fixCount) {
+    findings.push({
+      category: "voyage",
+      level: "green",
+      title: "DR plot fixes available",
+      detail: `${fixCount} DR/GPS plot fix${fixCount === 1 ? "" : "es"} were bundled for chart review.`,
+    });
+  } else {
+    findings.push({
+      category: "voyage",
+      level: "amber",
+      title: "No DR plot fixes bundled",
+      detail: "The review found no recorded DR plot fixes. Older voyages, or voyages without DR Plotter running, may not include them.",
+    });
+  }
+}
+
+function highestReviewLevel(findings) {
+  if (findings.some((finding) => finding.level === "red")) return "red";
+  if (findings.some((finding) => finding.level === "amber")) return "amber";
+  return "green";
+}
+
+function reviewHeadline({ softwareStatus, voyageStatus, status }) {
+  if (status === "red") {
+    return `Software ${softwareStatus.toUpperCase()}, voyage data ${voyageStatus.toUpperCase()}: investigate red items before relying on this setup.`;
+  }
+  if (status === "amber") {
+    return `Software ${softwareStatus.toUpperCase()}, voyage data ${voyageStatus.toUpperCase()}: usable review with cautions.`;
+  }
+  return "Software GREEN, voyage data GREEN: reviewed checks look healthy.";
+}
+
+function reviewTrustName(value) {
+  return value ? String(value).replace(/[-_]+/g, " ") : "unknown";
+}
+
+function formatReviewNumber(value, digits, suffix) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "not recorded";
+  return `${number.toFixed(digits)}${suffix}`;
+}
+
+function formatSecondsForReview(seconds) {
+  const value = Math.max(0, Math.round(Number(seconds) || 0));
+  const hours = Math.floor(value / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  const secs = value % 60;
+  if (hours) return `${hours} h ${minutes} min`;
+  if (minutes) return secs ? `${minutes} min ${secs} s` : `${minutes} min`;
+  return `${secs} s`;
 }
 
 function isInsideWindow(timestamp, window) {

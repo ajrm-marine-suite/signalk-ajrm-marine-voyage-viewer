@@ -16,6 +16,7 @@ const elements = {
   statusLine: document.querySelector("#statusLine"),
   selectedDetails: document.querySelector("#selectedDetails"),
   plotSelected: document.querySelector("#plotSelected"),
+  reviewSelected: document.querySelector("#reviewSelected"),
   centrePlot: document.querySelector("#centrePlot"),
   toggleDrTrack: document.querySelector("#toggleDrTrack"),
   toggleDrFixes: document.querySelector("#toggleDrFixes"),
@@ -27,6 +28,7 @@ const elements = {
   summaryTitle: document.querySelector("#summaryTitle"),
   summarySubtitle: document.querySelector("#summarySubtitle"),
   summaryGrid: document.querySelector("#summaryGrid"),
+  reviewPanel: document.querySelector("#reviewPanel"),
   downloadGpx: document.querySelector("#downloadGpx"),
   downloadSelected: document.querySelector("#downloadSelected"),
   comment: document.querySelector("#comment"),
@@ -458,6 +460,7 @@ function selectFile(file) {
 function updateSelection() {
   const hasSelection = Boolean(selectedFile);
   elements.plotSelected.disabled = !hasSelection;
+  elements.reviewSelected.disabled = !hasSelection;
   elements.centrePlot.disabled = !plottedBounds;
   setLinkEnabled(elements.downloadGpx, hasSelection);
   setLinkEnabled(elements.downloadSelected, hasSelection);
@@ -491,27 +494,40 @@ function showSelectedPlaceholder() {
     ? "Press Plot to draw this recording and build its summary."
     : "";
   elements.summaryGrid.replaceChildren();
+  renderReview(null);
   elements.comment.textContent = "";
 }
 
 async function analyseSelectedFile() {
   if (!selectedFile) return;
-  await analyseFile(activeKind, selectedFile.fileName);
+  await analyseFile(activeKind, selectedFile.fileName, { plot: true });
 }
 
-async function analyseFile(kind, fileName) {
+async function reviewSelectedFile() {
+  if (!selectedFile) return;
+  await analyseFile(activeKind, selectedFile.fileName, { plot: false });
+}
+
+async function analyseFile(kind, fileName, { plot = true } = {}) {
   startPlotProgress(fileName);
-  showToast(`Analysing ${fileName}…`);
-  elements.statusLine.textContent = `Analysing ${fileName}…`;
+  showToast(plot ? `Analysing ${fileName}…` : `Reviewing ${fileName}…`);
+  elements.statusLine.textContent = plot ? `Analysing ${fileName}…` : `Reviewing ${fileName}…`;
   try {
     const data = await requestJson(
       `${apiBase}/files/${encodeURIComponent(kind)}/${encodeURIComponent(fileName)}/analyse`,
       { method: "POST" },
     );
-    setPlotProgress(90, "Rendering track and summary…");
-    renderAnalysis(data.analysis);
-    finishPlotProgress("Voyage plotted.");
-    showToast("Voyage plotted.");
+    setPlotProgress(90, plot ? "Rendering track and summary…" : "Rendering review…");
+    if (plot) {
+      renderAnalysis(data.analysis);
+      finishPlotProgress("Voyage plotted.");
+      showToast("Voyage plotted.");
+    } else {
+      currentAnalysis = data.analysis;
+      renderSummary(data.analysis);
+      finishPlotProgress("Voyage reviewed.");
+      showToast("Voyage reviewed.");
+    }
   } catch (error) {
     failPlotProgress(error.message);
     showToast(error.message, true);
@@ -803,7 +819,9 @@ function addTrackLine(points, options) {
 function centrePlot() {
   if (!map || !plottedBounds?.isValid?.()) return;
   const leftPadding = elements.voyageDrawer.classList.contains("open") ? 380 : 28;
-  const bottomPadding = elements.summaryPanel.classList.contains("open") ? 72 : 28;
+  const bottomPadding = elements.summaryPanel.classList.contains("open")
+    ? Math.min(260, Math.round(elements.summaryPanel.getBoundingClientRect().height) + 24)
+    : 28;
   map.fitBounds(plottedBounds, {
     paddingTopLeft: [leftPadding, 96],
     paddingBottomRight: [28, bottomPadding],
@@ -862,6 +880,63 @@ function renderSummary(analysis) {
       return item;
     }),
   );
+  renderReview(analysis.review);
+}
+
+function renderReview(review) {
+  const panel = elements.reviewPanel;
+  if (!panel) return;
+  if (!review) {
+    panel.hidden = true;
+    panel.replaceChildren();
+    return;
+  }
+  panel.hidden = false;
+  const statusRow = document.createElement("div");
+  statusRow.className = "review-status-row";
+  statusRow.append(
+    reviewLight("Software", review.softwareStatus || review.status || "amber"),
+    reviewLight("Voyage data", review.voyageStatus || review.status || "amber"),
+  );
+
+  const headline = document.createElement("p");
+  headline.className = "review-headline";
+  headline.textContent = review.headline || "Voyage review complete.";
+
+  const paragraphs = document.createElement("div");
+  paragraphs.className = "review-copy";
+  for (const text of review.paragraphs || []) {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = text;
+    paragraphs.append(paragraph);
+  }
+
+  const list = document.createElement("div");
+  list.className = "review-findings";
+  for (const finding of review.findings || []) {
+    const item = document.createElement("article");
+    item.className = `review-finding ${reviewLevelClass(finding.level)}`;
+    item.innerHTML = `
+      <strong>${escapeHtml(finding.title || "Finding")}</strong>
+      <span>${escapeHtml(finding.category === "software" ? "Software" : "Voyage data")}</span>
+      <p>${escapeHtml(finding.detail || "")}</p>
+    `;
+    list.append(item);
+  }
+
+  panel.replaceChildren(statusRow, headline, paragraphs, list);
+}
+
+function reviewLight(label, level) {
+  const item = document.createElement("div");
+  item.className = `review-light ${reviewLevelClass(level)}`;
+  item.innerHTML = `<span aria-hidden="true"></span><strong>${escapeHtml(label)}</strong><em>${escapeHtml(String(level || "unknown").toUpperCase())}</em>`;
+  return item;
+}
+
+function reviewLevelClass(level) {
+  if (level === "green" || level === "red" || level === "amber") return level;
+  return "amber";
 }
 
 function gpsIntegritySummary(gpsIntegrity) {
@@ -1106,6 +1181,7 @@ elements.toggleVoyages.addEventListener("click", () => togglePanel(elements.voya
 elements.toggleCharts.addEventListener("click", () => togglePanel(elements.chartDrawer));
 elements.refreshVoyages.addEventListener("click", () => loadFiles(activeKind));
 elements.plotSelected.addEventListener("click", analyseSelectedFile);
+elements.reviewSelected.addEventListener("click", reviewSelectedFile);
 elements.centrePlot.addEventListener("click", centrePlot);
 elements.toggleDrTrack.addEventListener("click", () => {
   if (!hasDrTracks(currentAnalysis?.drTracks)) return;
