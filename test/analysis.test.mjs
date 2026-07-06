@@ -130,6 +130,10 @@ test("analyses reference-mode voyage bundles from AJRM Marine Logger files", asy
   assert.equal(analysis.sourceKind, "voyages");
   assert.equal(analysis.summary.trackPoints, 2);
   assert.ok(analysis.summary.distanceNm > 0.49 && analysis.summary.distanceNm < 0.51);
+  assert.equal(analysis.review.schemaVersion, 2);
+  assert.equal(analysis.review.softwareStatus, null);
+  assert.ok(!analysis.review.findings.some((finding) => finding.category === "software"));
+  assert.match(analysis.review.headline, /No BITE software-chain result was bundled/);
 });
 
 test("summarises GPS Integrity events from captured Signal K state", async () => {
@@ -485,6 +489,8 @@ test("web app exposes DR plot-fix overlay controls", async () => {
   assert.match(app, /function renderReview/);
   assert.match(app, /reviewLight\("Software"/);
   assert.match(app, /reviewLight\("Voyage data"/);
+  assert.match(app, /showSummary: false/);
+  assert.match(app, /Track plotted\. Press Review/);
   assert.match(app, /className: `plot-fix-symbol-marker/);
   assert.match(app, /className: "plot-fix-label-marker"/);
   assert.match(app, /iconSize: \[28, 28\]/);

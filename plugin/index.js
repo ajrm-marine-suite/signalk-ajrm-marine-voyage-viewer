@@ -318,7 +318,7 @@ async function readFreshPlotCache(sourcePath, source, kind, file, maxTrackPoints
     if (cache.source?.bytes !== source.bytes || cache.source?.mtimeMs !== source.mtimeMs) continue;
     if (Number(cache.options?.maxTrackPoints) !== Number(maxTrackPoints)) continue;
     if (!cache.analysis || typeof cache.analysis !== "object") continue;
-    if (!cache.analysis.review) continue;
+    if (cache.analysis.review?.schemaVersion !== 2) continue;
     return {
       ...cache.analysis,
       cache: {
@@ -1388,13 +1388,6 @@ function buildVoyageReview({
         detail: `${bite.passed} BITE checks were bundled and all passed.`,
       });
     }
-  } else {
-    findings.push({
-      category: "software",
-      level: "amber",
-      title: "No BITE report bundled",
-      detail: "This voyage can still be reviewed, but there is no built-in-test evidence for the software chain in this bundle.",
-    });
   }
 
   if (gps.available) {
@@ -1421,11 +1414,15 @@ function buildVoyageReview({
     });
   }
 
-  const softwareStatus = highestReviewLevel(findings.filter((finding) => finding.category === "software"));
+  const softwareFindings = findings.filter((finding) => finding.category === "software");
   const voyageStatus = highestReviewLevel(findings.filter((finding) => finding.category !== "software"));
-  const status = highestReviewLevel([{ level: softwareStatus }, { level: voyageStatus }]);
+  const softwareStatus = softwareFindings.length ? highestReviewLevel(softwareFindings) : null;
+  const status = softwareStatus
+    ? highestReviewLevel([{ level: softwareStatus }, { level: voyageStatus }])
+    : voyageStatus;
   const headline = reviewHeadline({ softwareStatus, voyageStatus, status });
   return {
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     status,
     softwareStatus,
@@ -1551,6 +1548,11 @@ function highestReviewLevel(findings) {
 }
 
 function reviewHeadline({ softwareStatus, voyageStatus, status }) {
+  if (!softwareStatus) {
+    if (voyageStatus === "red") return "Voyage data RED: investigate red navigation findings before relying on this voyage record.";
+    if (voyageStatus === "amber") return "Voyage data AMBER: reviewed with cautions. No BITE software-chain result was bundled.";
+    return "Voyage data GREEN: reviewed checks look healthy. No BITE software-chain result was bundled.";
+  }
   if (status === "red") {
     return `Software ${softwareStatus.toUpperCase()}, voyage data ${voyageStatus.toUpperCase()}: investigate red items before relying on this setup.`;
   }

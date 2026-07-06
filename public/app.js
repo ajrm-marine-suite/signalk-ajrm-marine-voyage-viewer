@@ -491,7 +491,7 @@ function showSelectedPlaceholder() {
   elements.toggleDrFixes.setAttribute("aria-pressed", "false");
   elements.summaryTitle.textContent = selectedFile?.fileName || "Voyage summary";
   elements.summarySubtitle.textContent = selectedFile
-    ? "Press Plot to draw this recording and build its summary."
+    ? "Press Plot to draw the track, or Review for the voyage summary."
     : "";
   elements.summaryGrid.replaceChildren();
   renderReview(null);
@@ -519,7 +519,7 @@ async function analyseFile(kind, fileName, { plot = true } = {}) {
     );
     setPlotProgress(90, plot ? "Rendering track and summary…" : "Rendering review…");
     if (plot) {
-      renderAnalysis(data.analysis);
+      renderAnalysis(data.analysis, { showSummary: false });
       finishPlotProgress("Voyage plotted.");
       showToast("Voyage plotted.");
     } else {
@@ -657,7 +657,7 @@ function downloadBlob(blob, fileName) {
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
-function renderAnalysis(analysis) {
+function renderAnalysis(analysis, { showSummary = true } = {}) {
   currentAnalysis = analysis;
   const track = analysis.track || [];
   trackLayer.clearLayers();
@@ -695,7 +695,14 @@ function renderAnalysis(analysis) {
     }).addTo(markerLayer);
   }
   keepChartLayersOnTop();
-  renderSummary(analysis);
+  if (showSummary) {
+    renderSummary(analysis);
+  } else {
+    elements.summaryTitle.textContent = analysis.fileName || analysis.id || "Voyage";
+    elements.summarySubtitle.textContent = "Track plotted. Press Review for voyage summary and findings.";
+    elements.summaryGrid.replaceChildren();
+    renderReview(null);
+  }
 }
 
 function hasDrTracks(drTracks) {
@@ -895,10 +902,8 @@ function renderReview(review) {
   panel.hidden = false;
   const statusRow = document.createElement("div");
   statusRow.className = "review-status-row";
-  statusRow.append(
-    reviewLight("Software", review.softwareStatus || review.status || "amber"),
-    reviewLight("Voyage data", review.voyageStatus || review.status || "amber"),
-  );
+  if (review.softwareStatus) statusRow.append(reviewLight("Software", review.softwareStatus));
+  statusRow.append(reviewLight("Voyage data", review.voyageStatus || review.status || "amber"));
 
   const headline = document.createElement("p");
   headline.className = "review-headline";
