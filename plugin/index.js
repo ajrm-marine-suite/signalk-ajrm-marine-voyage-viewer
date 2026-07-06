@@ -26,6 +26,7 @@ const AJRM_MARINE_GPS_INTEGRITY_STATE_PATH = "plugins.ajrmMarineGpsIntegrity.nav
 const DR_TRACK_RELATIVE_PATH = "tracks/dr-track.jsonl";
 const DR_PLOT_FIXES_RELATIVE_PATH = "tracks/dr-plot-fixes.json";
 const AJRM_MARINE_CAPTURE_API_REGISTRY = Symbol.for("mcdonaldajr.ajrmMarineCaptureApi");
+const STATUS_PATH = "plugins.ajrmMarineVoyageViewer";
 
 module.exports = function ajrmMarineVoyageViewer(app) {
   const plugin = {};
@@ -66,6 +67,7 @@ module.exports = function ajrmMarineVoyageViewer(app) {
 
   plugin.start = (pluginOptions = {}) => {
     options = normalizeOptions(pluginOptions);
+    publishStatus();
     app.setPluginStatus(`Started v${packageInfo.version}`);
   };
 
@@ -73,13 +75,7 @@ module.exports = function ajrmMarineVoyageViewer(app) {
 
   plugin.registerWithRouter = function registerWithRouter(router) {
     router.get("/status", (_req, res) => {
-      res.json({
-        ok: true,
-        version: packageInfo.version,
-        voyageDirectory: options.voyageDirectory,
-        logDirectory: options.logDirectory,
-        clipDirectory: options.clipDirectory,
-      });
+      res.json(statusPayload());
     });
 
     router.get("/voyages", async (_req, res) => {
@@ -183,6 +179,34 @@ module.exports = function ajrmMarineVoyageViewer(app) {
       }
     });
   };
+
+  function statusPayload() {
+    return {
+      ok: true,
+      plugin: plugin.id,
+      version: packageInfo.version,
+      voyageDirectory: options.voyageDirectory,
+      logDirectory: options.logDirectory,
+      clipDirectory: options.clipDirectory,
+      capabilities: {
+        plot: true,
+        download: true,
+        review: true,
+      },
+      review: {
+        supported: true,
+        schemaVersion: 2,
+      },
+    };
+  }
+
+  function publishStatus() {
+    if (typeof app.handleMessage !== "function") return;
+    app.handleMessage(plugin.id, {
+      context: "vessels.self",
+      updates: [{ values: [{ path: STATUS_PATH, value: statusPayload() }] }],
+    });
+  }
 
   return plugin;
 };

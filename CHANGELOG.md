@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.21
+
+- Publish Voyage Viewer status into Signal K at `plugins.ajrmMarineVoyageViewer`, including voyage/log/clip directories and Review capability metadata for Console BITE checks.
+- Return the same suite-facing status shape from the HTTP status route.
+
 ## 0.5.20
 
 - Use the global AJRM Marine Capture API registry as a fallback when preparing

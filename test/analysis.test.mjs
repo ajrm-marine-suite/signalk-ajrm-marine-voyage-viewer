@@ -19,6 +19,18 @@ test("voyage downloads defer to Capture portable bundle builder when available",
   assert.match(source, /cannot safely download a complete voyage bundle from Voyage Viewer/);
 });
 
+test("publishes suite-facing status and review capability", async () => {
+  const source = await fs.readFile(new URL("../plugin/index.js", import.meta.url), "utf8");
+  assert.match(source, /const STATUS_PATH = "plugins\.ajrmMarineVoyageViewer"/);
+  assert.match(source, /publishStatus\(\)/);
+  assert.match(source, /path: STATUS_PATH, value: statusPayload\(\)/);
+  assert.match(source, /voyageDirectory: options\.voyageDirectory/);
+  assert.match(source, /logDirectory: options\.logDirectory/);
+  assert.match(source, /clipDirectory: options\.clipDirectory/);
+  assert.match(source, /review:\s*{\s*supported: true,\s*schemaVersion: 2/s);
+  assert.match(source, /capabilities:\s*{\s*plot: true,\s*download: true,\s*review: true/s);
+});
+
 test("track distance uses nautical miles", () => {
   const nm = _private.trackDistanceNm([
     { lat: 56.0, lon: -5.0, ts: "2026-06-22T00:00:00.000Z" },
