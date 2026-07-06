@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.22
+
+- Download selected voyage/log files through an authenticated browser `fetch`
+  and blob handoff instead of direct navigation to the protected plugin route,
+  preventing Signal K security from showing a username/password prompt.
+
 ## 0.5.21
 
 - Publish Voyage Viewer status into Signal K at `plugins.ajrmMarineVoyageViewer`, including voyage/log/clip directories and Review capability metadata for Console BITE checks.

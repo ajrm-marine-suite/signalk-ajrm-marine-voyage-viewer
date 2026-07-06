@@ -19,6 +19,18 @@ test("voyage downloads defer to Capture portable bundle builder when available",
   assert.match(source, /cannot safely download a complete voyage bundle from Voyage Viewer/);
 });
 
+test("download button fetches protected bundles as blobs", async () => {
+  const source = await fs.readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.match(source, /async function downloadSelectedFile\(event\)/);
+  assert.match(source, /event\.preventDefault\(\)/);
+  assert.match(source, /await fetch\(downloadUrl\(activeKind, fileName\)/);
+  assert.match(source, /await response\.blob\(\)/);
+  assert.match(source, /fileNameFromContentDisposition\(response\.headers\.get\("Content-Disposition"\)\)/);
+  assert.match(source, /downloadBlob\(blob, downloadName\)/);
+  assert.match(source, /elements\.downloadSelected\.href = "#"/);
+  assert.doesNotMatch(source, /elements\.downloadSelected\.href = downloadUrl/);
+});
+
 test("publishes suite-facing status and review capability", async () => {
   const source = await fs.readFile(new URL("../plugin/index.js", import.meta.url), "utf8");
   assert.match(source, /const STATUS_PATH = "plugins\.ajrmMarineVoyageViewer"/);

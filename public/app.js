@@ -473,7 +473,7 @@ function updateSelection() {
   elements.selectedDetails.textContent = selectedFile.comment
     ? `${selectedFile.fileName} · ${selectedFile.comment} · ${fileMeta(selectedFile)}`
     : `${selectedFile.fileName} · ${fileMeta(selectedFile)}`;
-  elements.downloadSelected.href = downloadUrl(activeKind, selectedFile.fileName);
+  elements.downloadSelected.href = "#";
   elements.downloadSelected.download = selectedFile.fileName;
   elements.downloadGpx.href = gpxUrl(activeKind, selectedFile.fileName);
   elements.downloadGpx.download = gpxFileName(selectedFile.fileName);
@@ -623,6 +623,25 @@ function startExportProgress(fileName) {
   }, 650);
 }
 
+function startDownloadProgress(fileName) {
+  clearInterval(progressTimer);
+  elements.plotProgress.classList.remove("hidden", "failed");
+  setPlotProgress(8, `Preparing download for ${fileName}…`);
+  const stages = [
+    [28, "Requesting voyage bundle…"],
+    [52, "Collating files…"],
+    [76, "Receiving download…"],
+    [90, "Handing file to browser…"],
+  ];
+  let index = 0;
+  progressTimer = setInterval(() => {
+    if (index < stages.length) {
+      setPlotProgress(stages[index][0], stages[index][1]);
+      index += 1;
+    }
+  }, 700);
+}
+
 async function exportSelectedGpx(event) {
   event.preventDefault();
   if (!selectedFile || elements.downloadGpx.classList.contains("disabled")) return;
@@ -644,6 +663,47 @@ async function exportSelectedGpx(event) {
     failPlotProgress(error.message);
     showToast(error.message, true);
   }
+}
+
+async function downloadSelectedFile(event) {
+  event.preventDefault();
+  if (!selectedFile || elements.downloadSelected.classList.contains("disabled")) return;
+  const fileName = selectedFile.fileName;
+  startDownloadProgress(fileName);
+  showDownloadFeedback(elements.downloadSelected, "Preparing…");
+  try {
+    const response = await fetch(downloadUrl(activeKind, fileName), {
+      headers: { Accept: "application/zip,application/gzip,application/octet-stream,*/*" },
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(text || response.statusText || "Download failed");
+    }
+    const blob = await response.blob();
+    const downloadName = fileNameFromContentDisposition(response.headers.get("Content-Disposition"))
+      || elements.downloadSelected.download
+      || fileName;
+    downloadBlob(blob, downloadName);
+    finishPlotProgress("Download ready.");
+    showToast("Download ready.");
+  } catch (error) {
+    failPlotProgress(error.message);
+    showToast(error.message, true);
+  }
+}
+
+function fileNameFromContentDisposition(header) {
+  const value = String(header || "");
+  const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match) {
+    try {
+      return decodeURIComponent(utf8Match[1].trim().replace(/^"|"$/g, ""));
+    } catch {
+      return utf8Match[1].trim().replace(/^"|"$/g, "");
+    }
+  }
+  const plainMatch = value.match(/filename="?([^";]+)"?/i);
+  return plainMatch ? plainMatch[1].trim() : "";
 }
 
 function downloadBlob(blob, fileName) {
@@ -1236,8 +1296,7 @@ elements.downloadGpx.addEventListener("click", (event) => {
   exportSelectedGpx(event);
 });
 elements.downloadSelected.addEventListener("click", (event) => {
-  if (elements.downloadSelected.classList.contains("disabled")) event.preventDefault();
-  showDownloadFeedback(elements.downloadSelected);
+  downloadSelectedFile(event);
 });
 
 initMap();
