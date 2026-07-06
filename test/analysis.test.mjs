@@ -11,9 +11,12 @@ import {
 test("voyage downloads defer to Capture portable bundle builder when available", async () => {
   const source = await fs.readFile(new URL("../plugin/index.js", import.meta.url), "utf8");
   assert.match(source, /prepareCaptureVoyageDownload\(app, file\)/);
+  assert.match(source, /globalThis\[AJRM_MARINE_CAPTURE_API_REGISTRY\]/);
   assert.match(source, /api\.prepareVoyageDownload\(fileName\)/);
   assert.match(source, /kind === "voyages"/);
+  assert.match(source, /voyage-viewer-\$\{captureDownload\.fileName\}/);
   assert.match(source, /captureDownload\.cleanup\(\)/);
+  assert.match(source, /cannot safely download a complete voyage bundle from Voyage Viewer/);
 });
 
 test("track distance uses nautical miles", () => {

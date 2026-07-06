@@ -25,6 +25,7 @@ const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const AJRM_MARINE_GPS_INTEGRITY_STATE_PATH = "plugins.ajrmMarineGpsIntegrity.navigationIntegrity";
 const DR_TRACK_RELATIVE_PATH = "tracks/dr-track.jsonl";
 const DR_PLOT_FIXES_RELATIVE_PATH = "tracks/dr-plot-fixes.json";
+const AJRM_MARINE_CAPTURE_API_REGISTRY = Symbol.for("mcdonaldajr.ajrmMarineCaptureApi");
 
 module.exports = function ajrmMarineVoyageViewer(app) {
   const plugin = {};
@@ -108,11 +109,12 @@ module.exports = function ajrmMarineVoyageViewer(app) {
         if (kind === "voyages") {
           captureDownload = await prepareCaptureVoyageDownload(app, file);
           if (captureDownload) {
-            res.download(captureDownload.path, captureDownload.fileName, () => {
+            res.download(captureDownload.path, `voyage-viewer-${captureDownload.fileName}`, () => {
               captureDownload.cleanup().catch(() => {});
             });
             return;
           }
+          throw new Error("AJRM Marine Capture portable download API is unavailable; cannot safely download a complete voyage bundle from Voyage Viewer.");
         }
         const filePath = path.join(directoryForKind(kind, options), file);
         await assertReadableFile(filePath);
@@ -186,11 +188,12 @@ module.exports = function ajrmMarineVoyageViewer(app) {
 };
 
 async function prepareCaptureVoyageDownload(app, fileName) {
-  const api = app.ajrmMarineCaptureApi;
+  const api = app.ajrmMarineCaptureApi || globalThis[AJRM_MARINE_CAPTURE_API_REGISTRY];
   if (!api || typeof api.prepareVoyageDownload !== "function") return null;
   try {
     return await api.prepareVoyageDownload(fileName);
-  } catch {
+  } catch (error) {
+    app.error?.(`[signalk-ajrm-marine-voyage-viewer] Capture portable voyage download failed: ${error.stack || error.message}`);
     return null;
   }
 }
