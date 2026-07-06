@@ -423,14 +423,16 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
     buildDrTracks(secondPass.drTrackSamples, maxTrackPoints, "capture");
   const drPlotFixes = await readVoyageDrPlotFixes(voyagePath, index);
   const gpsIntegrity = buildGpsIntegrityAnalysis(secondPass.gpsIntegritySamples);
+  const traffic = buildTrafficAnalysis(secondPass.trafficNotificationSamples);
   const markers = hourlyMarkers(track);
-  const summary = buildSummary(index, track, secondPass, firstPass, ownContext, gpsIntegrity);
+  const summary = buildSummary(index, track, secondPass, firstPass, ownContext, gpsIntegrity, traffic);
   const biteReports = readVoyageBiteReports(voyagePath);
   const review = buildVoyageReview({
     index,
     track,
     summary,
     gpsIntegrity,
+    traffic,
     drTracks,
     drPlotFixes,
     biteReports,
@@ -445,6 +447,7 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
     ownContext,
     summary,
     review,
+    traffic,
     hourlyMarkers: markers,
     track: thinTrack(track, maxTrackPoints),
     drTracks,
@@ -465,6 +468,7 @@ async function analyseRecording(recordingPath, { kind = "logs", maxTrackPoints =
   const track = sortTrack(ownPass.track);
   const drTracks = buildDrTracks(ownPass.drTrackSamples, maxTrackPoints, "capture");
   const gpsIntegrity = buildGpsIntegrityAnalysis(ownPass.gpsIntegritySamples);
+  const traffic = buildTrafficAnalysis(ownPass.trafficNotificationSamples);
   const index = {
     id: path.basename(recordingPath).replace(/\.jsonl(\.gz)?$/i, ""),
     startedAt: track[0]?.ts || firstPass.sampleStart || recordingStartedAtFromFileName(path.basename(recordingPath)),
@@ -473,12 +477,13 @@ async function analyseRecording(recordingPath, { kind = "logs", maxTrackPoints =
     stopReason: "",
     snapshotCount: 0,
   };
-  const summary = buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity);
+  const summary = buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity, traffic);
   const review = buildVoyageReview({
     index,
     track,
     summary,
     gpsIntegrity,
+    traffic,
     drTracks,
     drPlotFixes: null,
     biteReports: [],
@@ -493,6 +498,7 @@ async function analyseRecording(recordingPath, { kind = "logs", maxTrackPoints =
     ownContext,
     summary,
     review,
+    traffic,
     hourlyMarkers: hourlyMarkers(track),
     track: thinTrack(track, maxTrackPoints),
     drTracks,
@@ -580,6 +586,7 @@ async function scanCaptureSources(captureSources, ownContext, window = null) {
     track: [],
     drTrackSamples: [],
     gpsIntegritySamples: [],
+    trafficNotificationSamples: [],
     speedSamples: [],
     maxSogKnots: null,
     maxApparentWindKnots: null,
@@ -618,6 +625,7 @@ function emptyScanResult() {
     track: [],
     drTrackSamples: [],
     gpsIntegritySamples: [],
+    trafficNotificationSamples: [],
     speedSamples: [],
     maxSogKnots: null,
     maxApparentWindKnots: null,
@@ -642,6 +650,10 @@ function scanRecord(record, ownContext, result, window) {
         if (sample) result.drTrackSamples.push(sample);
         const integritySample = normalizeGpsIntegritySample(value, timestamp);
         if (integritySample) result.gpsIntegritySamples.push(integritySample);
+      } else if (isTrafficNotificationPath(valuePath)) {
+        if (!isInsideWindow(timestamp, window)) continue;
+        const samples = normalizeTrafficNotificationSamples(value, timestamp, valuePath);
+        result.trafficNotificationSamples.push(...samples);
       } else if (valuePath === "navigation.position" && isPosition(value)) {
         result.positionCounts.set(context, (result.positionCounts.get(context) || 0) + 1);
         touchSampleTimes(result, timestamp);
@@ -779,6 +791,98 @@ function normalizeGpsIntegrityCounters(value = {}) {
     degradedSignals: countOrNull(value.degradedSignals),
     drDiscrepancies: countOrNull(value.drDiscrepancies),
   };
+}
+
+function isTrafficNotificationPath(valuePath) {
+  return valuePath === "plugins.ajrmMarineNotifications" ||
+    valuePath.startsWith("notifications.") ||
+    valuePath.includes(".notifications.");
+}
+
+function normalizeTrafficNotificationSamples(value, fallbackTimestamp = null, valuePath = "") {
+  const unwrapped = unwrapValue(value);
+  const records = [];
+  if (!unwrapped || typeof unwrapped !== "object") return records;
+  if (unwrapped.contract === "notifications-plus-projection") {
+    for (const item of [...(unwrapped.active || []), ...(unwrapped.recentActivity || [])]) {
+      const record = normalizeTrafficNotificationItem(item, fallbackTimestamp, valuePath);
+      if (record) records.push(record);
+    }
+    return records;
+  }
+  const record = normalizeTrafficNotificationItem(unwrapped, fallbackTimestamp, valuePath);
+  if (record) records.push(record);
+  return records;
+}
+
+function normalizeTrafficNotificationItem(item, fallbackTimestamp, valuePath) {
+  if (!item || typeof item !== "object") return null;
+  const presentation = item.presentation && typeof item.presentation === "object" ? item.presentation : {};
+  const context = item.context && typeof item.context === "object" ? item.context : {};
+  const message = stringOrNull(presentation.message) ||
+    stringOrNull(presentation.audioMessage) ||
+    stringOrNull(item.message);
+  const label = stringOrNull(presentation.label) || stringOrNull(item.label);
+  const provider = stringOrNull(item.provider);
+  const category = stringOrNull(presentation.category) || stringOrNull(item.category);
+  if (provider && provider !== "ajrm-marine-traffic") return null;
+  if (!isTrafficAlertText(label, message, category, valuePath)) return null;
+  const eventId = stringOrNull(item.eventId) ||
+    `${fallbackTimestamp || ""}:${label || ""}:${message || ""}`.slice(0, 240);
+  const severity = trafficSeverity(label, message, item.priority?.level);
+  if (!severity) return null;
+  const size = trafficVesselSize(presentation.facts, message);
+  const cpaMeters = extractCpaMeters(message);
+  return {
+    ts: stringOrNull(item.timestamp) || fallbackTimestamp,
+    eventId,
+    severity,
+    label: label || (severity === "collision" ? "Collision alarm" : "Traffic advisory"),
+    message: message || "",
+    title: stringOrNull(presentation.title),
+    mmsi: stringOrNull(context.mmsi) || extractMmsi(context.targetContext) || extractMmsi(valuePath),
+    targetContext: stringOrNull(context.targetContext),
+    size,
+    cpaMeters,
+  };
+}
+
+function isTrafficAlertText(label, message, category, valuePath) {
+  const text = `${label || ""} ${message || ""}`.toLowerCase();
+  if (category === "cpa") return true;
+  if (text.includes("traffic advisory") || text.includes("collision alarm")) return true;
+  return valuePath.includes("notifications") && text.includes("cpa");
+}
+
+function trafficSeverity(label, message, priorityLevel) {
+  const text = `${label || ""} ${message || ""} ${priorityLevel || ""}`.toLowerCase();
+  if (text.includes("collision alarm") || text.includes("alarm") || text.includes("danger")) return "collision";
+  if (text.includes("traffic advisory") || text.includes("advisory") || text.includes("warn")) return "advisory";
+  return null;
+}
+
+function trafficVesselSize(facts, message) {
+  const factText = Array.isArray(facts) ? facts.join(" ") : "";
+  const text = `${factText} ${message || ""}`.toLowerCase();
+  if (text.includes("large vessel") || /\blarge\b/.test(text)) return "large";
+  if (text.includes("medium vessel") || /\bmedium\b/.test(text)) return "medium";
+  if (text.includes("small craft") || text.includes("small vessel") || /\bsmall\b/.test(text)) return "small";
+  return "unknown";
+}
+
+function extractMmsi(value) {
+  const text = String(value || "");
+  const match = text.match(/mmsi[:/.-]?(\d{6,10})/i) || text.match(/\b(\d{9})\b/);
+  return match ? match[1] : null;
+}
+
+function extractCpaMeters(message) {
+  const text = String(message || "");
+  const meters = text.match(/CPA\s+([0-9]+(?:\.[0-9]+)?)\s+meters?/i);
+  if (meters) return Number(meters[1]);
+  const miles = text.match(/CPA\s+([0-9]+(?:\.[0-9]+)?)\s+miles?/i);
+  if (miles) return Number(miles[1]) * 1852;
+  return null;
 }
 
 function countOrNull(value) {
@@ -1060,7 +1164,74 @@ function sortTrack(track) {
   return sorted;
 }
 
-function buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity = null) {
+function buildTrafficAnalysis(samples = []) {
+  const eventsById = new Map();
+  for (const sample of samples) {
+    if (!sample?.eventId) continue;
+    if (!eventsById.has(sample.eventId)) {
+      eventsById.set(sample.eventId, sample);
+      continue;
+    }
+    const existing = eventsById.get(sample.eventId);
+    if (!existing.message && sample.message) eventsById.set(sample.eventId, sample);
+  }
+  const events = [...eventsById.values()]
+    .filter((event) => event.severity === "advisory" || event.severity === "collision")
+    .sort((left, right) => Date.parse(left.ts || "") - Date.parse(right.ts || ""));
+  const vessels = new Map();
+  let closestCpaMeters = null;
+  let closestEvent = null;
+  for (const event of events) {
+    const key = event.mmsi || event.title || event.targetContext || event.eventId;
+    const existing = vessels.get(key) || {
+      key,
+      name: event.title || "",
+      mmsi: event.mmsi || "",
+      size: event.size || "unknown",
+      advisories: 0,
+      collisions: 0,
+    };
+    if (!existing.name && event.title) existing.name = event.title;
+    if (existing.size === "unknown" && event.size) existing.size = event.size;
+    if (event.severity === "collision") existing.collisions += 1;
+    if (event.severity === "advisory") existing.advisories += 1;
+    vessels.set(key, existing);
+    if (Number.isFinite(event.cpaMeters) && (closestCpaMeters == null || event.cpaMeters < closestCpaMeters)) {
+      closestCpaMeters = event.cpaMeters;
+      closestEvent = event;
+    }
+  }
+  const vesselList = [...vessels.values()];
+  const bySize = {
+    small: vesselList.filter((vessel) => vessel.size === "small").length,
+    medium: vesselList.filter((vessel) => vessel.size === "medium").length,
+    large: vesselList.filter((vessel) => vessel.size === "large").length,
+    unknown: vesselList.filter((vessel) => vessel.size === "unknown").length,
+  };
+  const advisories = events.filter((event) => event.severity === "advisory").length;
+  const collisions = events.filter((event) => event.severity === "collision").length;
+  return {
+    available: events.length > 0,
+    events: events.length,
+    advisories,
+    collisionAlerts: collisions,
+    vesselsEncountered: vesselList.length,
+    bySize,
+    closestCpaMeters,
+    closestCpaEvent: closestEvent
+      ? {
+          ts: closestEvent.ts,
+          title: closestEvent.title,
+          mmsi: closestEvent.mmsi,
+          severity: closestEvent.severity,
+          cpaMeters: closestEvent.cpaMeters,
+        }
+      : null,
+    vessels: vesselList.slice(0, 50),
+  };
+}
+
+function buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity = null, traffic = null) {
   const startedAt = index.startedAt || track[0]?.ts || firstPass.sampleStart || null;
   const stoppedAt =
     index.stoppedAt || track[track.length - 1]?.ts || firstPass.sampleEnd || null;
@@ -1090,6 +1261,7 @@ function buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity
     stopReason: index.stopReason || "",
     snapshotCount: Number(index.snapshotCount) || 0,
     gpsIntegrity: gpsIntegrity?.summary || { available: false },
+    traffic: traffic || { available: false },
   };
 }
 
@@ -1135,6 +1307,7 @@ function buildVoyageReview({
   track,
   summary,
   gpsIntegrity,
+  traffic,
   drTracks,
   drPlotFixes,
   biteReports = [],
@@ -1159,6 +1332,35 @@ function buildVoyageReview({
       level: "amber",
       title: "No depth samples found",
       detail: "The voyage bundle did not include usable depth samples for this review.",
+    });
+  }
+
+  if (traffic?.available) {
+    const sizeParts = [];
+    if (traffic.bySize?.small) sizeParts.push(`${traffic.bySize.small} small`);
+    if (traffic.bySize?.medium) sizeParts.push(`${traffic.bySize.medium} medium`);
+    if (traffic.bySize?.large) sizeParts.push(`${traffic.bySize.large} large`);
+    if (traffic.bySize?.unknown) sizeParts.push(`${traffic.bySize.unknown} unknown size`);
+    const closest = Number.isFinite(traffic.closestCpaMeters)
+      ? ` Closest reported CPA was ${formatReviewDistance(traffic.closestCpaMeters)}${traffic.closestCpaEvent?.title ? ` for ${traffic.closestCpaEvent.title}` : ""}.`
+      : "";
+    paragraphs.push(
+      `Traffic review found ${traffic.vesselsEncountered} vessel${traffic.vesselsEncountered === 1 ? "" : "s"} encountered${sizeParts.length ? ` (${sizeParts.join(", ")})` : ""}, ${traffic.advisories} traffic advisories, and ${traffic.collisionAlerts} collision alerts.${closest}`,
+    );
+    findings.push({
+      category: "voyage",
+      level: traffic.collisionAlerts ? "amber" : "green",
+      title: traffic.collisionAlerts ? "Collision alerts recorded" : "Traffic alerts reviewed",
+      detail: traffic.collisionAlerts
+        ? `${traffic.collisionAlerts} collision alert${traffic.collisionAlerts === 1 ? "" : "s"} and ${traffic.advisories} advisor${traffic.advisories === 1 ? "y" : "ies"} were recorded for ${traffic.vesselsEncountered} vessel${traffic.vesselsEncountered === 1 ? "" : "s"}.`
+        : `${traffic.advisories} traffic advisor${traffic.advisories === 1 ? "y" : "ies"} were recorded and no collision alerts were found.`,
+    });
+  } else {
+    findings.push({
+      category: "voyage",
+      level: "amber",
+      title: "No traffic alert history",
+      detail: "No AJRM Marine Traffic advisory or collision notifications were found in the recording.",
     });
   }
 
@@ -1366,6 +1568,13 @@ function formatReviewNumber(value, digits, suffix) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "not recorded";
   return `${number.toFixed(digits)}${suffix}`;
+}
+
+function formatReviewDistance(meters) {
+  const value = Number(meters);
+  if (!Number.isFinite(value)) return "not recorded";
+  if (value < 1000) return `${Math.round(value)} meters`;
+  return `${(value / 1852).toFixed(value < 3704 ? 1 : 0)} miles`;
 }
 
 function formatSecondsForReview(seconds) {

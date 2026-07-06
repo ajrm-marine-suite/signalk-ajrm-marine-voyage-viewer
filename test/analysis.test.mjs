@@ -202,6 +202,36 @@ test("builds English voyage review with separate software and voyage-data lights
       acceptedGps: true,
       counters: { evaluations: 1, acceptedFixes: 1, rejectedFixes: 0, positionJumps: 0, lostFixes: 0, degradedSignals: 0, drDiscrepancies: 0 },
     }),
+    trafficProjectionRecord("2026-06-22T12:02:00.000Z", [
+      trafficEvent({
+        eventId: "traffic-advisory-111-1",
+        label: "Traffic advisory",
+        title: "HARBOUR TUG",
+        mmsi: "235900001",
+        message: "Traffic advisory. Medium vessel HARBOUR TUG at 10 o'clock. CPA will be ahead. 150 meters in 7 minutes.",
+        facts: ["medium", "10 o'clock"],
+      }),
+      trafficEvent({
+        eventId: "traffic-collision-222-1",
+        label: "Collision alarm",
+        title: "FAST FERRY ONE",
+        mmsi: "235900002",
+        message: "Collision alarm. Large vessel FAST FERRY ONE at 12 o'clock. Risk of collision. CPA 80 meters in 2 minutes.",
+        facts: ["large", "12 o'clock"],
+        priority: "danger",
+      }),
+    ]),
+    trafficProjectionRecord("2026-06-22T12:03:00.000Z", [
+      trafficEvent({
+        eventId: "traffic-collision-222-1",
+        label: "Collision alarm",
+        title: "FAST FERRY ONE",
+        mmsi: "235900002",
+        message: "Collision alarm. Large vessel FAST FERRY ONE at 12 o'clock. Risk of collision. CPA 80 meters in 2 minutes.",
+        facts: ["large", "12 o'clock"],
+        priority: "danger",
+      }),
+    ]),
     captureRecord("2026-06-22T12:10:00.000Z", 56.00833, -5.0, 3),
   ];
   await fs.writeFile(logFile, records.map((record) => JSON.stringify(record)).join("\n"));
@@ -245,9 +275,16 @@ test("builds English voyage review with separate software and voyage-data lights
   assert.equal(analysis.review.softwareStatus, "red");
   assert.equal(analysis.review.voyageStatus, "amber");
   assert.equal(analysis.review.bite.failed, 1);
+  assert.equal(analysis.traffic.vesselsEncountered, 2);
+  assert.equal(analysis.traffic.bySize.medium, 1);
+  assert.equal(analysis.traffic.bySize.large, 1);
+  assert.equal(analysis.traffic.advisories, 1);
+  assert.equal(analysis.traffic.collisionAlerts, 1);
+  assert.equal(analysis.traffic.closestCpaMeters, 80);
   assert.match(analysis.review.headline, /Software RED, voyage data AMBER/);
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("Review test")));
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("deliberately inject")));
+  assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("2 vessels encountered")));
   assert.ok(analysis.review.findings.some((finding) => finding.category === "software" && finding.level === "red"));
   assert.ok(analysis.review.findings.some((finding) => finding.category === "voyage"));
 });
@@ -501,6 +538,52 @@ function gpsIntegrityRecord(timestamp, state) {
           ],
         },
       ],
+    },
+  };
+}
+
+function trafficProjectionRecord(timestamp, active) {
+  return {
+    capturedAt: timestamp,
+    delta: {
+      context: "vessels.self",
+      updates: [
+        {
+          timestamp,
+          values: [
+            {
+              path: "plugins.ajrmMarineNotifications",
+              value: {
+                contract: "notifications-plus-projection",
+                serverTime: timestamp,
+                active,
+                recentActivity: [],
+              },
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function trafficEvent({ eventId, label, title, mmsi, message, facts = [], priority = "warning" }) {
+  return {
+    provider: "ajrm-marine-traffic",
+    eventId,
+    timestamp: "2026-06-22T12:02:00.000Z",
+    priority: { level: priority, score: priority === "danger" ? 800 : 500 },
+    presentation: {
+      title,
+      label,
+      message,
+      audioMessage: message,
+      category: "cpa",
+      facts,
+    },
+    context: {
+      mmsi,
+      targetContext: `vessels.urn:mrn:imo:mmsi:${mmsi}`,
     },
   };
 }

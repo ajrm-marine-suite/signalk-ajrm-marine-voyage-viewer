@@ -865,6 +865,7 @@ function renderSummary(analysis) {
     ["GPS outages", gpsOutageSummary(analysis.gpsIntegrity || summary.gpsIntegrity)],
     ["GPS rejected", gpsRejectedSummary(analysis.gpsIntegrity || summary.gpsIntegrity)],
     ["GPS/DR mismatch", gpsDrMismatchSummary(analysis.gpsIntegrity || summary.gpsIntegrity)],
+    ["Traffic", trafficSummary(analysis.traffic || summary.traffic)],
     ["Snapshots", String(summary.snapshotCount || 0)],
     ["Start", summary.startReason || "—"],
     ["Stop", summary.stopReason || "—"],
@@ -948,6 +949,17 @@ function gpsIntegritySummary(gpsIntegrity) {
     ? ` · ${summary.lastReason}`
     : "";
   return `${trust} · ${evaluations}${lastReason}`;
+}
+
+function trafficSummary(traffic) {
+  const summary = traffic || {};
+  if (!summary.available) return "—";
+  const sizes = [];
+  if (summary.bySize?.small) sizes.push(`${summary.bySize.small} S`);
+  if (summary.bySize?.medium) sizes.push(`${summary.bySize.medium} M`);
+  if (summary.bySize?.large) sizes.push(`${summary.bySize.large} L`);
+  if (summary.bySize?.unknown) sizes.push(`${summary.bySize.unknown} ?`);
+  return `${summary.vesselsEncountered || 0} vessels${sizes.length ? ` (${sizes.join(", ")})` : ""} · ${summary.advisories || 0} adv · ${summary.collisionAlerts || 0} coll`;
 }
 
 function gpsOutageSummary(gpsIntegrity) {
