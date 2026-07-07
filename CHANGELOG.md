@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.27
+
+- Treat recorded traffic advisories and collision alerts as normal
+  informational voyage history, not as amber voyage-data cautions.
+- Invalidate `0.5.26` review caches so voyages previously marked amber only
+  because they contained collision alerts are re-reviewed correctly.
+
 ## 0.5.26
 
 - Include the primary red/amber finding in the Voyage Review headline, so

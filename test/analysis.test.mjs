@@ -326,11 +326,12 @@ test("builds English voyage review with separate software and voyage-data lights
   assert.equal(analysis.traffic.closestCpaMeters, 80);
   assert.match(analysis.review.headline, /Software RED, voyage data AMBER/);
   assert.match(analysis.review.headline, /software: Built-in test failure/);
-  assert.match(analysis.review.headline, /voyage: .*Collision alerts recorded/);
+  assert.doesNotMatch(analysis.review.headline, /Collision alerts recorded/);
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("Review test")));
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("deliberately inject")));
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("2 vessels encountered")));
   assert.ok(analysis.review.findings.some((finding) => finding.category === "software" && finding.level === "red"));
+  assert.ok(analysis.review.findings.some((finding) => finding.title === "Traffic alerts reviewed" && finding.level === "green"));
   assert.ok(analysis.review.findings.some((finding) => finding.category === "voyage"));
 });
 

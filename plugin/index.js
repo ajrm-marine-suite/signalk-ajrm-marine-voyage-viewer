@@ -23,7 +23,7 @@ const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v1";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const REVIEW_SCHEMA_VERSION = 2;
-const REVIEW_ENGINE_VERSION = 5;
+const REVIEW_ENGINE_VERSION = 6;
 const AJRM_MARINE_GPS_INTEGRITY_STATE_PATH = "plugins.ajrmMarineGpsIntegrity.navigationIntegrity";
 const DR_TRACK_RELATIVE_PATH = "tracks/dr-track.jsonl";
 const DR_PLOT_FIXES_RELATIVE_PATH = "tracks/dr-plot-fixes.json";
@@ -1426,11 +1426,9 @@ function buildVoyageReview({
     );
     findings.push({
       category: "voyage",
-      level: traffic.collisionAlerts ? "amber" : "green",
-      title: traffic.collisionAlerts ? "Collision alerts recorded" : "Traffic alerts reviewed",
-      detail: traffic.collisionAlerts
-        ? `${traffic.collisionAlerts} collision alert${traffic.collisionAlerts === 1 ? "" : "s"} and ${traffic.advisories} advisor${traffic.advisories === 1 ? "y" : "ies"} were recorded for ${traffic.vesselsEncountered} vessel${traffic.vesselsEncountered === 1 ? "" : "s"}.`
-        : `${traffic.advisories} traffic advisor${traffic.advisories === 1 ? "y" : "ies"} were recorded and no collision alerts were found.`,
+      level: "green",
+      title: "Traffic alerts reviewed",
+      detail: `${traffic.collisionAlerts} collision alert${traffic.collisionAlerts === 1 ? "" : "s"} and ${traffic.advisories} advisor${traffic.advisories === 1 ? "y" : "ies"} were recorded for ${traffic.vesselsEncountered} vessel${traffic.vesselsEncountered === 1 ? "" : "s"}. Alert counts are informational and do not make the voyage data amber by themselves.`,
     });
   } else {
     findings.push({
