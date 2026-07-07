@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.25
+
+- Restyle the Voyage/Clip/Log selector as folder-style tabs, separate from the
+  normal action buttons below it.
+
 ## 0.5.24
 
 - Ignore BITE reports that do not overlap the reviewed voyage window, so a
