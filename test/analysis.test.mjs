@@ -169,6 +169,8 @@ test("analyses reference-mode voyage bundles from AJRM Marine Logger files", asy
   assert.equal(analysis.review.softwareStatus, null);
   assert.ok(!analysis.review.findings.some((finding) => finding.category === "software"));
   assert.doesNotMatch(analysis.review.headline, /BITE|software-chain/);
+  assert.match(analysis.review.headline, /Voyage data AMBER: .+/);
+  assert.doesNotMatch(analysis.review.headline, /reviewed with cautions/);
 });
 
 test("summarises GPS Integrity events from captured Signal K state", async () => {
@@ -323,6 +325,8 @@ test("builds English voyage review with separate software and voyage-data lights
   assert.equal(analysis.traffic.collisionAlerts, 1);
   assert.equal(analysis.traffic.closestCpaMeters, 80);
   assert.match(analysis.review.headline, /Software RED, voyage data AMBER/);
+  assert.match(analysis.review.headline, /software: Built-in test failure/);
+  assert.match(analysis.review.headline, /voyage: .*Collision alerts recorded/);
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("Review test")));
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("deliberately inject")));
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("2 vessels encountered")));

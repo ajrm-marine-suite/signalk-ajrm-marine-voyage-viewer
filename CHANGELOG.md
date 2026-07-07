@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.26
+
+- Include the primary red/amber finding in the Voyage Review headline, so
+  status lights explain why a voyage is amber or red without hunting through
+  the findings list.
+- Invalidate older review caches so existing voyages are re-reviewed with the
+  clearer headline.
+
 ## 0.5.25
 
 - Restyle the Voyage/Clip/Log selector as folder-style tabs, separate from the

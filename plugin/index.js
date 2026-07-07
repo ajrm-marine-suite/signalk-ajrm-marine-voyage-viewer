@@ -23,7 +23,7 @@ const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v1";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const REVIEW_SCHEMA_VERSION = 2;
-const REVIEW_ENGINE_VERSION = 4;
+const REVIEW_ENGINE_VERSION = 5;
 const AJRM_MARINE_GPS_INTEGRITY_STATE_PATH = "plugins.ajrmMarineGpsIntegrity.navigationIntegrity";
 const DR_TRACK_RELATIVE_PATH = "tracks/dr-track.jsonl";
 const DR_PLOT_FIXES_RELATIVE_PATH = "tracks/dr-plot-fixes.json";
@@ -1492,12 +1492,19 @@ function buildVoyageReview({
   }
 
   const softwareFindings = findings.filter((finding) => finding.category === "software");
-  const voyageStatus = highestReviewLevel(findings.filter((finding) => finding.category !== "software"));
+  const voyageFindings = findings.filter((finding) => finding.category !== "software");
+  const voyageStatus = highestReviewLevel(voyageFindings);
   const softwareStatus = softwareFindings.length ? highestReviewLevel(softwareFindings) : null;
   const status = softwareStatus
     ? highestReviewLevel([{ level: softwareStatus }, { level: voyageStatus }])
     : voyageStatus;
-  const headline = reviewHeadline({ softwareStatus, voyageStatus, status });
+  const headline = reviewHeadline({
+    softwareStatus,
+    voyageStatus,
+    status,
+    softwareReasons: reviewStatusReasons(softwareFindings, softwareStatus),
+    voyageReasons: reviewStatusReasons(voyageFindings, voyageStatus),
+  });
   return {
     schemaVersion: REVIEW_SCHEMA_VERSION,
     engineVersion: REVIEW_ENGINE_VERSION,
@@ -1667,17 +1674,40 @@ function highestReviewLevel(findings) {
   return "green";
 }
 
-function reviewHeadline({ softwareStatus, voyageStatus, status }) {
+function reviewStatusReasons(findings, status) {
+  if (status !== "red" && status !== "amber") return "";
+  const titles = findings
+    .filter((finding) => finding.level === status)
+    .map((finding) => String(finding.title || "").trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  if (!titles.length) return "";
+  if (titles.length === 1) return titles[0];
+  if (titles.length === 2) return `${titles[0]} and ${titles[1]}`;
+  return `${titles[0]}, ${titles[1]}, and ${titles[2]}`;
+}
+
+function reviewHeadline({ softwareStatus, voyageStatus, status, softwareReasons = "", voyageReasons = "" }) {
   if (!softwareStatus) {
-    if (voyageStatus === "red") return "Voyage data RED: investigate red navigation findings before relying on this voyage record.";
-    if (voyageStatus === "amber") return "Voyage data AMBER: reviewed with cautions.";
+    if (voyageStatus === "red") {
+      return `Voyage data RED: ${voyageReasons || "investigate red navigation findings before relying on this voyage record"}.`;
+    }
+    if (voyageStatus === "amber") {
+      return `Voyage data AMBER: ${voyageReasons || "reviewed with cautions"}.`;
+    }
     return "Voyage data GREEN: reviewed checks look healthy.";
   }
   if (status === "red") {
-    return `Software ${softwareStatus.toUpperCase()}, voyage data ${voyageStatus.toUpperCase()}: investigate red items before relying on this setup.`;
+    const parts = [];
+    if (softwareStatus !== "green" && softwareReasons) parts.push(`software: ${softwareReasons}`);
+    if (voyageStatus !== "green" && voyageReasons) parts.push(`voyage: ${voyageReasons}`);
+    return `Software ${softwareStatus.toUpperCase()}, voyage data ${voyageStatus.toUpperCase()}: ${parts.join("; ") || "investigate red items before relying on this setup"}.`;
   }
   if (status === "amber") {
-    return `Software ${softwareStatus.toUpperCase()}, voyage data ${voyageStatus.toUpperCase()}: usable review with cautions.`;
+    const parts = [];
+    if (softwareStatus !== "green" && softwareReasons) parts.push(`software: ${softwareReasons}`);
+    if (voyageStatus !== "green" && voyageReasons) parts.push(`voyage: ${voyageReasons}`);
+    return `Software ${softwareStatus.toUpperCase()}, voyage data ${voyageStatus.toUpperCase()}: ${parts.join("; ") || "usable review with cautions"}.`;
   }
   return "Software GREEN, voyage data GREEN: reviewed checks look healthy.";
 }
