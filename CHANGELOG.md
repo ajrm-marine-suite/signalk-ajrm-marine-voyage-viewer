@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.28
+
+- Add skipper-facing Voyage Review highlights for duration, distance, track
+  points, speed, depth, traffic, GPS Integrity, DR fixes, and recovered
+  recordings.
+- Add a plain-English review conclusion above the detailed findings, keeping
+  traffic alerts as voyage history rather than caution status.
+- Invalidate review caches so existing voyages are re-reviewed with the new
+  highlight and conclusion fields.
+
 ## 0.5.27
 
 - Treat recorded traffic advisories and collision alerts as normal

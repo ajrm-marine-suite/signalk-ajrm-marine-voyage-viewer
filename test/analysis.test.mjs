@@ -171,6 +171,9 @@ test("analyses reference-mode voyage bundles from AJRM Marine Logger files", asy
   assert.doesNotMatch(analysis.review.headline, /BITE|software-chain/);
   assert.match(analysis.review.headline, /Voyage data AMBER: .+/);
   assert.doesNotMatch(analysis.review.headline, /reviewed with cautions/);
+  assert.ok(analysis.review.conclusion.includes("Voyage data has cautions"));
+  assert.ok(analysis.review.highlights.some((highlight) => highlight.label === "Distance" && highlight.value === "0.5 NM"));
+  assert.ok(analysis.review.highlights.some((highlight) => highlight.label === "Track points" && highlight.value === "2"));
 });
 
 test("summarises GPS Integrity events from captured Signal K state", async () => {
@@ -327,6 +330,9 @@ test("builds English voyage review with separate software and voyage-data lights
   assert.match(analysis.review.headline, /Software RED, voyage data AMBER/);
   assert.match(analysis.review.headline, /software: Built-in test failure/);
   assert.doesNotMatch(analysis.review.headline, /Collision alerts recorded/);
+  assert.ok(analysis.review.conclusion.includes("Software checks failed"));
+  assert.ok(analysis.review.highlights.some((highlight) => highlight.label === "Traffic" && highlight.value.includes("2 vessels")));
+  assert.ok(analysis.review.highlights.some((highlight) => highlight.label === "GPS Integrity" && highlight.value === "healthy"));
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("Review test")));
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("deliberately inject")));
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("2 vessels encountered")));
@@ -676,8 +682,13 @@ test("web app exposes DR plot-fix overlay controls", async () => {
   assert.match(html, /id="reviewPanel"/);
   assert.match(app, /function renderDrPlotFixes/);
   assert.match(app, /function renderReview/);
+  assert.match(app, /review-conclusion/);
+  assert.match(app, /review-highlights/);
+  assert.match(app, /review-highlight/);
   assert.match(app, /reviewLight\("Software"/);
   assert.match(app, /reviewLight\("Voyage data"/);
+  assert.match(css, /\.review-highlights/);
+  assert.match(css, /\.review-highlight/);
   assert.match(app, /showSummary: false/);
   assert.match(app, /Track plotted\. Press Review/);
   assert.match(app, /className: `plot-fix-symbol-marker/);

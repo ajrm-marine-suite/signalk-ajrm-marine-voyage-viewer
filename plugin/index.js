@@ -23,7 +23,7 @@ const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v1";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const REVIEW_SCHEMA_VERSION = 2;
-const REVIEW_ENGINE_VERSION = 6;
+const REVIEW_ENGINE_VERSION = 7;
 const AJRM_MARINE_GPS_INTEGRITY_STATE_PATH = "plugins.ajrmMarineGpsIntegrity.navigationIntegrity";
 const DR_TRACK_RELATIVE_PATH = "tracks/dr-track.jsonl";
 const DR_PLOT_FIXES_RELATIVE_PATH = "tracks/dr-plot-fixes.json";
@@ -1503,6 +1503,8 @@ function buildVoyageReview({
     softwareReasons: reviewStatusReasons(softwareFindings, softwareStatus),
     voyageReasons: reviewStatusReasons(voyageFindings, voyageStatus),
   });
+  const highlights = buildReviewHighlights({ index, summary, gps, traffic, drPlotFixes });
+  const conclusion = reviewConclusion({ status, softwareStatus, voyageStatus, softwareFindings, voyageFindings });
   return {
     schemaVersion: REVIEW_SCHEMA_VERSION,
     engineVersion: REVIEW_ENGINE_VERSION,
@@ -1511,10 +1513,55 @@ function buildVoyageReview({
     softwareStatus,
     voyageStatus,
     headline,
+    conclusion,
+    highlights,
     paragraphs,
     findings,
     bite,
   };
+}
+
+function buildReviewHighlights({ index, summary, gps, traffic, drPlotFixes }) {
+  const highlights = [
+    reviewHighlight("Duration", formatSecondsForReview(summary.durationSeconds), "green"),
+    reviewHighlight("Distance", Number.isFinite(summary.distanceNm) ? `${summary.distanceNm.toFixed(1)} NM` : "not recorded", Number.isFinite(summary.distanceNm) ? "green" : "amber"),
+    reviewHighlight("Track points", String(summary.trackPoints || 0), summary.trackPoints ? "green" : "red"),
+    reviewHighlight("Average speed", formatReviewNumber(summary.averageSpeedKnots, 1, " knots"), Number.isFinite(summary.averageSpeedKnots) ? "green" : "amber"),
+  ];
+  if (summary.minDepthMeters != null) {
+    highlights.push(reviewHighlight("Minimum depth", formatReviewNumber(summary.minDepthMeters, 1, " meters"), "green"));
+  }
+  if (traffic?.available) {
+    highlights.push(reviewHighlight(
+      "Traffic",
+      `${traffic.vesselsEncountered} vessel${traffic.vesselsEncountered === 1 ? "" : "s"}, ${traffic.collisionAlerts} collision alert${traffic.collisionAlerts === 1 ? "" : "s"}`,
+      "green",
+    ));
+  } else {
+    highlights.push(reviewHighlight("Traffic", "not recorded", "amber"));
+  }
+  if (gps?.available) {
+    const gpsIssues = (gps.lostFixes || 0) + (gps.positionJumps || 0) + (gps.rejectedFixes || 0) + (gps.drDiscrepancies || 0) + (gps.degradedSignals || 0);
+    highlights.push(reviewHighlight(
+      "GPS Integrity",
+      gpsIssues ? `${gpsIssues} issue${gpsIssues === 1 ? "" : "s"}` : "healthy",
+      gpsIssues ? "amber" : "green",
+    ));
+  } else {
+    highlights.push(reviewHighlight("GPS Integrity", "not recorded", "amber"));
+  }
+  const fixCount = (drPlotFixes?.plotFixes || []).length;
+  highlights.push(reviewHighlight("DR fixes", fixCount ? String(fixCount) : "none bundled", fixCount ? "green" : "amber"));
+  if (index.interruptedByRestart || /restart/i.test(String(index.stopReason || ""))) {
+    highlights.push(reviewHighlight("Recording", "recovered after restart", "green"));
+  } else if (index.stopReason) {
+    highlights.push(reviewHighlight("Recording", index.stopReason, "green"));
+  }
+  return highlights;
+}
+
+function reviewHighlight(label, value, level = "green") {
+  return { label, value, level };
 }
 
 function summarizeBiteReports(reports) {
@@ -1708,6 +1755,28 @@ function reviewHeadline({ softwareStatus, voyageStatus, status, softwareReasons 
     return `Software ${softwareStatus.toUpperCase()}, voyage data ${voyageStatus.toUpperCase()}: ${parts.join("; ") || "usable review with cautions"}.`;
   }
   return "Software GREEN, voyage data GREEN: reviewed checks look healthy.";
+}
+
+function reviewConclusion({ status, softwareStatus, voyageStatus, softwareFindings, voyageFindings }) {
+  if (status === "green") {
+    return "Review found no software or voyage-data issues requiring action. Traffic alerts are retained as voyage history.";
+  }
+  const parts = [];
+  if (softwareStatus === "red") {
+    parts.push("Software checks failed: do not rely on this setup until the red software findings are understood.");
+  } else if (softwareStatus === "amber") {
+    parts.push("Software checks have cautions; review the amber software findings.");
+  }
+  if (voyageStatus === "red") {
+    parts.push("Voyage data has red navigation findings; treat this recording as unreliable until those findings are understood.");
+  } else if (voyageStatus === "amber") {
+    parts.push("Voyage data has cautions; review the amber voyage findings before drawing conclusions from the recording.");
+  }
+  if (!parts.length) {
+    const amberOrRed = [...softwareFindings, ...voyageFindings].filter((finding) => finding.level === "red" || finding.level === "amber");
+    if (amberOrRed.length) parts.push("Review the amber and red findings below.");
+  }
+  return parts.join(" ");
 }
 
 function reviewTrustName(value) {

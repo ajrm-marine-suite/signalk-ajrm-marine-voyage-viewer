@@ -969,6 +969,22 @@ function renderReview(review) {
   headline.className = "review-headline";
   headline.textContent = review.headline || "Voyage review complete.";
 
+  const conclusion = document.createElement("p");
+  conclusion.className = "review-conclusion";
+  conclusion.textContent = review.conclusion || "";
+
+  const highlights = document.createElement("div");
+  highlights.className = "review-highlights";
+  for (const highlight of review.highlights || []) {
+    const item = document.createElement("div");
+    item.className = `review-highlight ${reviewLevelClass(highlight.level)}`;
+    item.innerHTML = `
+      <span>${escapeHtml(highlight.label || "")}</span>
+      <strong>${escapeHtml(highlight.value || "")}</strong>
+    `;
+    highlights.append(item);
+  }
+
   const paragraphs = document.createElement("div");
   paragraphs.className = "review-copy";
   for (const text of review.paragraphs || []) {
@@ -990,7 +1006,11 @@ function renderReview(review) {
     list.append(item);
   }
 
-  panel.replaceChildren(statusRow, headline, paragraphs, list);
+  const children = [statusRow, headline];
+  if (conclusion.textContent) children.push(conclusion);
+  if (highlights.childElementCount) children.push(highlights);
+  children.push(paragraphs, list);
+  panel.replaceChildren(...children);
 }
 
 function reviewLight(label, level) {
