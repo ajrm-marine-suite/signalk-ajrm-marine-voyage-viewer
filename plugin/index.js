@@ -23,7 +23,7 @@ const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v1";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const REVIEW_SCHEMA_VERSION = 2;
-const REVIEW_ENGINE_VERSION = 3;
+const REVIEW_ENGINE_VERSION = 4;
 const AJRM_MARINE_GPS_INTEGRITY_STATE_PATH = "plugins.ajrmMarineGpsIntegrity.navigationIntegrity";
 const DR_TRACK_RELATIVE_PATH = "tracks/dr-track.jsonl";
 const DR_PLOT_FIXES_RELATIVE_PATH = "tracks/dr-plot-fixes.json";
@@ -477,7 +477,7 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
   const traffic = buildTrafficAnalysis(secondPass.trafficNotificationSamples);
   const markers = hourlyMarkers(track);
   const summary = buildSummary(index, track, secondPass, firstPass, ownContext, gpsIntegrity, traffic);
-  const biteReports = readVoyageBiteReports(voyagePath);
+  const biteReports = readVoyageBiteReports(voyagePath, index);
   const review = buildVoyageReview({
     index,
     track,
@@ -1316,25 +1316,48 @@ function buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity
   };
 }
 
-function readVoyageBiteReports(voyagePath) {
+function readVoyageBiteReports(voyagePath, index = {}) {
   try {
     const zip = new AdmZip(voyagePath);
     const reports = [];
+    const window = {
+      startMs: Date.parse(index.startedAt || ""),
+      stopMs: Date.parse(index.stoppedAt || ""),
+    };
     for (const entry of zip.getEntries()) {
       if (entry.isDirectory) continue;
       if (!/^system\/bite-reports\/.+\.json$/i.test(entry.entryName)) continue;
       const parsed = JSON.parse(entry.getData().toString("utf8"));
       if (Array.isArray(parsed.reports)) {
-        reports.push(normalizeBiteReport(parsed, entry.entryName));
-        for (const report of parsed.reports) reports.push(normalizeBiteReport(report, entry.entryName));
+        const parent = normalizeBiteReport(parsed, entry.entryName);
+        if (biteReportOverlapsWindow(parent, window)) {
+          reports.push(parent);
+          for (const report of parsed.reports) reports.push(normalizeBiteReport(report, entry.entryName));
+        } else {
+          for (const report of parsed.reports) {
+            const child = normalizeBiteReport(report, entry.entryName);
+            if (biteReportOverlapsWindow(child, window)) reports.push(child);
+          }
+        }
       } else {
-        reports.push(normalizeBiteReport(parsed, entry.entryName));
+        const report = normalizeBiteReport(parsed, entry.entryName);
+        if (biteReportOverlapsWindow(report, window)) reports.push(report);
       }
     }
     return reports.filter(Boolean);
   } catch {
     return [];
   }
+}
+
+function biteReportOverlapsWindow(report, window) {
+  if (!report) return false;
+  if (!Number.isFinite(window.startMs) || !Number.isFinite(window.stopMs)) return true;
+  const fromMs = Date.parse(report.startedAt || "") || biteReportSortTime(report);
+  const finishedMs = Date.parse(report.finishedAt || "");
+  const toMs = Number.isFinite(finishedMs) ? finishedMs : fromMs;
+  if (!Number.isFinite(fromMs)) return false;
+  return toMs >= window.startMs && fromMs <= window.stopMs;
 }
 
 function normalizeBiteReport(report, source) {
@@ -1647,8 +1670,8 @@ function highestReviewLevel(findings) {
 function reviewHeadline({ softwareStatus, voyageStatus, status }) {
   if (!softwareStatus) {
     if (voyageStatus === "red") return "Voyage data RED: investigate red navigation findings before relying on this voyage record.";
-    if (voyageStatus === "amber") return "Voyage data AMBER: reviewed with cautions. No BITE software-chain result was bundled.";
-    return "Voyage data GREEN: reviewed checks look healthy. No BITE software-chain result was bundled.";
+    if (voyageStatus === "amber") return "Voyage data AMBER: reviewed with cautions.";
+    return "Voyage data GREEN: reviewed checks look healthy.";
   }
   if (status === "red") {
     return `Software ${softwareStatus.toUpperCase()}, voyage data ${voyageStatus.toUpperCase()}: investigate red items before relying on this setup.`;

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.24
+
+- Ignore BITE reports that do not overlap the reviewed voyage window, so a
+  normal soak or sailing voyage is not labelled as a BITE run merely because
+  old test reports were bundled.
+- Remove BITE/software wording from normal voyage-review headlines when no
+  in-window BITE result is present.
+
 ## 0.5.23
 
 - Score Voyage Review BITE results from the latest run-all report only, so
