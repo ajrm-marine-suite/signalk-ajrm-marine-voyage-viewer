@@ -23,7 +23,7 @@ const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v1";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const REVIEW_SCHEMA_VERSION = 2;
-const REVIEW_ENGINE_VERSION = 7;
+const REVIEW_ENGINE_VERSION = 8;
 const AJRM_MARINE_GPS_INTEGRITY_STATE_PATH = "plugins.ajrmMarineGpsIntegrity.navigationIntegrity";
 const DR_TRACK_RELATIVE_PATH = "tracks/dr-track.jsonl";
 const DR_PLOT_FIXES_RELATIVE_PATH = "tracks/dr-plot-fixes.json";
@@ -469,9 +469,9 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
     endMs: Date.parse(index.stoppedAt || ""),
   };
   const secondPass = await scanCaptureSources(captureSources, ownContext, voyageWindow);
-  const track = sortTrack(secondPass.track);
   const drTracks = (await readVoyageDrTracks(voyagePath, index, maxTrackPoints)) ||
     buildDrTracks(secondPass.drTrackSamples, maxTrackPoints, "capture");
+  const track = preferredVoyageTrack(sortTrack(secondPass.track), drTracks);
   const drPlotFixes = await readVoyageDrPlotFixes(voyagePath, index);
   const gpsIntegrity = buildGpsIntegrityAnalysis(secondPass.gpsIntegritySamples);
   const traffic = buildTrafficAnalysis(secondPass.trafficNotificationSamples);
@@ -1058,7 +1058,21 @@ function drTrackPoint(sample, point) {
   };
 }
 
+function preferredVoyageTrack(rawTrack, drTracks) {
+  const operational = Array.isArray(drTracks?.operational) ? drTracks.operational : [];
+  if (drTracks?.source === "bundle" && operational.length > 1) {
+    return operational.map((point) => ({
+      ts: point.ts,
+      lat: point.lat,
+      lon: point.lon,
+      sogKnots: null,
+    }));
+  }
+  return rawTrack;
+}
+
 function chooseOwnContext(positionCounts) {
+  if (positionCounts.has("vessels.self")) return "vessels.self";
   let selected = null;
   let selectedCount = 0;
   for (const [context, count] of positionCounts.entries()) {

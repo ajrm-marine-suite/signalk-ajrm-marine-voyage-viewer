@@ -51,12 +51,20 @@ test("track distance uses nautical miles", () => {
   assert.ok(nm > 0.49 && nm < 0.51);
 });
 
-test("chooses the context with most position samples as own vessel", () => {
+test("prefers vessels.self over higher-volume target position samples", () => {
   const counts = new Map([
-    ["vessels.target", 4],
+    ["vessels.target", 100],
     ["vessels.self", 10],
   ]);
   assert.equal(_private.chooseOwnContext(counts), "vessels.self");
+});
+
+test("falls back to the context with most samples when vessels.self is absent", () => {
+  const counts = new Map([
+    ["vessels.target.low", 4],
+    ["vessels.target.high", 10],
+  ]);
+  assert.equal(_private.chooseOwnContext(counts), "vessels.target.high");
 });
 
 test("hourly markers use nearest track point", () => {
@@ -543,6 +551,8 @@ test("analyses bundled DR track overlay samples", async () => {
     options: { logDirectory: dir },
   });
   assert.equal(analysis.drTracks.source, "bundle");
+  assert.equal(analysis.track.length, 3);
+  assert.equal(analysis.track[1].lat, 56.004);
   assert.equal(analysis.drTracks.operational.length, 3);
   assert.equal(analysis.drTracks.gps.length, 2);
   assert.equal(analysis.drTracks.integrity.length, 1);

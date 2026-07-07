@@ -60,6 +60,7 @@ let plottedBounds = null;
 let currentAnalysis = null;
 let drTrackVisible = false;
 let drFixesVisible = false;
+let analysisRequestId = 0;
 
 function showToast(message, isError = false) {
   elements.toast.textContent = message;
@@ -448,6 +449,7 @@ function renderFiles(files) {
 
 function selectFile(file) {
   selectedFile = file;
+  analysisRequestId += 1;
   for (const row of elements.voyageList.querySelectorAll(".file-row")) {
     const selected = row.querySelector("strong")?.textContent === file.fileName;
     row.classList.toggle("selected", selected);
@@ -480,6 +482,7 @@ function updateSelection() {
 }
 
 function showSelectedPlaceholder() {
+  clearPlottedLayers();
   plottedBounds = null;
   currentAnalysis = null;
   drTrackVisible = false;
@@ -498,6 +501,13 @@ function showSelectedPlaceholder() {
   elements.comment.textContent = "";
 }
 
+function clearPlottedLayers() {
+  trackLayer?.clearLayers();
+  drTrackLayer?.clearLayers();
+  drPlotFixLayer?.clearLayers();
+  markerLayer?.clearLayers();
+}
+
 async function analyseSelectedFile() {
   if (!selectedFile) return;
   await analyseFile(activeKind, selectedFile.fileName, { plot: true });
@@ -509,6 +519,10 @@ async function reviewSelectedFile() {
 }
 
 async function analyseFile(kind, fileName, { plot = true } = {}) {
+  const requestId = ++analysisRequestId;
+  clearPlottedLayers();
+  plottedBounds = null;
+  elements.centrePlot.disabled = true;
   startPlotProgress(fileName);
   showToast(plot ? `Analysing ${fileName}…` : `Reviewing ${fileName}…`);
   elements.statusLine.textContent = plot ? `Analysing ${fileName}…` : `Reviewing ${fileName}…`;
@@ -517,6 +531,9 @@ async function analyseFile(kind, fileName, { plot = true } = {}) {
       `${apiBase}/files/${encodeURIComponent(kind)}/${encodeURIComponent(fileName)}/analyse`,
       { method: "POST" },
     );
+    if (requestId !== analysisRequestId || selectedFile?.fileName !== fileName || activeKind !== kind) {
+      return;
+    }
     setPlotProgress(90, plot ? "Rendering track and summary…" : "Rendering review…");
     if (plot) {
       renderAnalysis(data.analysis, { showSummary: false });

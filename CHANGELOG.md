@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.29
+
+- Plot bundled own-vessel DR operational track data as the main voyage track
+  when it is available, preventing simulator target position streams from
+  being mistaken for the voyage path.
+- Clear old plotted layers as soon as a different recording is selected or
+  analysed, and ignore stale analysis responses from an earlier selection.
+- Invalidate plot/review caches so existing voyage bundles are re-analysed
+  with the corrected track source.
+
 ## 0.5.28
 
 - Add skipper-facing Voyage Review highlights for duration, distance, track
