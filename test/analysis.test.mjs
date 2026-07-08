@@ -260,16 +260,18 @@ test("builds English voyage review with separate software and voyage-data lights
         label: "Traffic advisory",
         title: "HARBOUR TUG",
         mmsi: "235900001",
-        message: "Traffic advisory. Medium vessel HARBOUR TUG at 10 o'clock. CPA will be ahead. 150 meters in 7 minutes.",
-        facts: ["medium", "10 o'clock"],
+        message: "Traffic advisory for HARBOUR TUG.",
+        vesselSize: "medium",
+        cpaMeters: 150,
       }),
       trafficEvent({
         eventId: "traffic-collision-222-1",
         label: "Collision alarm",
         title: "FAST FERRY ONE",
         mmsi: "235900002",
-        message: "Collision alarm. Large vessel FAST FERRY ONE at 12 o'clock. Risk of collision. CPA 80 meters in 2 minutes.",
-        facts: ["large", "12 o'clock"],
+        message: "Collision alarm for FAST FERRY ONE.",
+        vesselSize: "large",
+        cpaMeters: 80,
         priority: "danger",
       }),
     ]),
@@ -279,8 +281,9 @@ test("builds English voyage review with separate software and voyage-data lights
         label: "Collision alarm",
         title: "FAST FERRY ONE",
         mmsi: "235900002",
-        message: "Collision alarm. Large vessel FAST FERRY ONE at 12 o'clock. Risk of collision. CPA 80 meters in 2 minutes.",
-        facts: ["large", "12 o'clock"],
+        message: "Collision alarm wording changed without changing context.",
+        vesselSize: "large",
+        cpaMeters: 80,
         priority: "danger",
       }),
     ]),
@@ -783,7 +786,7 @@ function trafficProjectionRecord(timestamp, active) {
   };
 }
 
-function trafficEvent({ eventId, label, title, mmsi, message, facts = [], priority = "warning" }) {
+function trafficEvent({ eventId, label, title, mmsi, message, vesselSize = "unknown", cpaMeters = null, tcpaSeconds = null, priority = "warning" }) {
   return {
     provider: "ajrm-marine-traffic",
     eventId,
@@ -795,11 +798,14 @@ function trafficEvent({ eventId, label, title, mmsi, message, facts = [], priori
       message,
       audioMessage: message,
       category: "cpa",
-      facts,
+      facts: [],
     },
     context: {
       mmsi,
       targetContext: `vessels.urn:mrn:imo:mmsi:${mmsi}`,
+      vesselSize,
+      cpaMeters,
+      tcpaSeconds,
     },
   };
 }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.30
+
+- Read Traffic review CPA and vessel-size data from explicit notification
+  context fields instead of parsing alert message wording.
+
 ## 0.5.29
 
 - Plot bundled own-vessel DR operational track data as the main voyage track

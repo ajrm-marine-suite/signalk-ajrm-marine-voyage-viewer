@@ -877,13 +877,13 @@ function normalizeTrafficNotificationItem(item, fallbackTimestamp, valuePath) {
   const provider = stringOrNull(item.provider);
   const category = stringOrNull(presentation.category) || stringOrNull(item.category);
   if (provider && provider !== "ajrm-marine-traffic") return null;
-  if (!isTrafficAlertText(label, message, category, valuePath)) return null;
+  if (!isTrafficAlert({ provider, category })) return null;
   const eventId = stringOrNull(item.eventId) ||
-    `${fallbackTimestamp || ""}:${label || ""}:${message || ""}`.slice(0, 240);
-  const severity = trafficSeverity(label, message, item.priority?.level);
+    `${fallbackTimestamp || ""}:${provider || ""}:${category || ""}:${context.mmsi || context.targetContext || ""}`.slice(0, 240);
+  const severity = trafficSeverity(item.priority?.level, item.state);
   if (!severity) return null;
-  const size = trafficVesselSize(presentation.facts, message);
-  const cpaMeters = extractCpaMeters(message);
+  const size = trafficVesselSize(context.vesselSize);
+  const cpaMeters = numberOrNull(context.cpaMeters);
   return {
     ts: stringOrNull(item.timestamp) || fallbackTimestamp,
     eventId,
@@ -898,42 +898,26 @@ function normalizeTrafficNotificationItem(item, fallbackTimestamp, valuePath) {
   };
 }
 
-function isTrafficAlertText(label, message, category, valuePath) {
-  const text = `${label || ""} ${message || ""}`.toLowerCase();
-  if (category === "cpa") return true;
-  if (text.includes("traffic advisory") || text.includes("collision alarm")) return true;
-  return valuePath.includes("notifications") && text.includes("cpa");
+function isTrafficAlert({ provider, category }) {
+  return provider === "ajrm-marine-traffic" && category === "cpa";
 }
 
-function trafficSeverity(label, message, priorityLevel) {
-  const text = `${label || ""} ${message || ""} ${priorityLevel || ""}`.toLowerCase();
-  if (text.includes("collision alarm") || text.includes("alarm") || text.includes("danger")) return "collision";
-  if (text.includes("traffic advisory") || text.includes("advisory") || text.includes("warn")) return "advisory";
+function trafficSeverity(priorityLevel, state) {
+  const level = String(priorityLevel || state || "").trim().toLowerCase();
+  if (["alarm", "emergency", "danger"].includes(level)) return "collision";
+  if (["warn", "warning", "advisory", "alert"].includes(level)) return "advisory";
   return null;
 }
 
-function trafficVesselSize(facts, message) {
-  const factText = Array.isArray(facts) ? facts.join(" ") : "";
-  const text = `${factText} ${message || ""}`.toLowerCase();
-  if (text.includes("large vessel") || /\blarge\b/.test(text)) return "large";
-  if (text.includes("medium vessel") || /\bmedium\b/.test(text)) return "medium";
-  if (text.includes("small craft") || text.includes("small vessel") || /\bsmall\b/.test(text)) return "small";
-  return "unknown";
+function trafficVesselSize(value) {
+  const size = String(value || "").trim().toLowerCase();
+  return ["small", "medium", "large"].includes(size) ? size : "unknown";
 }
 
 function extractMmsi(value) {
   const text = String(value || "");
   const match = text.match(/mmsi[:/.-]?(\d{6,10})/i) || text.match(/\b(\d{9})\b/);
   return match ? match[1] : null;
-}
-
-function extractCpaMeters(message) {
-  const text = String(message || "");
-  const meters = text.match(/CPA\s+([0-9]+(?:\.[0-9]+)?)\s+meters?/i);
-  if (meters) return Number(meters[1]);
-  const miles = text.match(/CPA\s+([0-9]+(?:\.[0-9]+)?)\s+miles?/i);
-  if (miles) return Number(miles[1]) * 1852;
-  return null;
 }
 
 function countOrNull(value) {
