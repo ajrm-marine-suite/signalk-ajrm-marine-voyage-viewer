@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.1
+
+- Preserve integrity assurance/comparison availability, GPS-dependence,
+  current/leeway origin, input-source provenance, and Navigation Reference
+  provenance from compact DR tracks and copied DR Plotter fixes.
+- Do not draw an integrity comparison when GPS Integrity explicitly records
+  `comparisonAvailable: false`; expose the unavailable/reduced reason in voyage
+  analysis instead.
+- Preserve missing numeric evidence as `null` rather than displaying it as zero.
+- Update `adm-zip` to the fixed `0.6.x` line.
+- Show recomputed child lineage, prepared replay coverage, and live-input
+  isolation in the voyage list, summary, highlights, and review; incomplete or
+  contaminated replay results are explicit red software findings.
+
 ## 0.5.30
 
 - Read Traffic review CPA and vessel-size data from explicit notification

@@ -7,6 +7,21 @@ The app lists AJRM Marine Capture voyage bundles plus AJRM Marine Logger clips a
 logs. Any selected voyage, clip, or log can be plotted on a Leaflet chart,
 exported as GPX 1.1, downloaded, and summarised.
 
+Current builds preserve the navigation evidence carried by Capture's compact
+`tracks/dr-track.jsonl` and copied DR Plotter fixes: integrity assurance,
+explicit comparison availability, GPS-dependence, leeway/current origin, input
+sources, and the accepted Navigation Reference clock source. Voyage Viewer
+renders those provider decisions without selecting sensor sources or
+recalculating navigation policy. An integrity track is not drawn when GPS
+Integrity explicitly records `comparisonAvailable: false`; legacy records that
+do not contain the field remain reviewable.
+
+For recomputed child voyages, the file list, analysis summary, and Voyage
+Review expose the parent voyage, resolved replay-source lineage, cumulative
+prepared coverage, and live-input isolation result. Incomplete coverage or
+detected live-sensor contamination is shown as a red software finding rather
+than being reviewed as an ordinary clean voyage.
+
 Version `0.5.3` doubles the main plotted voyage track line thickness for easier
 viewing.
 
@@ -94,7 +109,11 @@ elsewhere.
 - Track point count and snapshot count
 - GPS Integrity summary when captured: final trust state, evaluations, GPS
   outages, rejected fixes, position jumps, weak-signal events, GPS/DR mismatch
-  count, and maximum DR uncertainty
+  count, maximum DR uncertainty, integrity assurance/comparison availability,
+  GPS-dependence, current/leeway origin, and Navigation Reference provenance
+
+DR Fix popups show the same explicit evidence copied from DR Plotter. Missing
+numeric evidence is displayed as unavailable, while a real zero remains zero.
 
 ## Notes
 
@@ -114,4 +133,3 @@ Development assistance: OpenAI Codex helped with code generation, refactoring, a
 This software is licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). You may use, study, share, and modify it under that licence. If you modify it and make it available to users over a network, the corresponding source code must also be made available under the AGPL.
 
 Commercial licensing is available by arrangement for organisations that want different terms.
-

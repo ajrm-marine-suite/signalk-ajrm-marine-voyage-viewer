@@ -23,7 +23,7 @@ const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v1";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const REVIEW_SCHEMA_VERSION = 2;
-const REVIEW_ENGINE_VERSION = 8;
+const REVIEW_ENGINE_VERSION = 10;
 const AJRM_MARINE_GPS_INTEGRITY_STATE_PATH = "plugins.ajrmMarineGpsIntegrity.navigationIntegrity";
 const DR_TRACK_RELATIVE_PATH = "tracks/dr-track.jsonl";
 const DR_PLOT_FIXES_RELATIVE_PATH = "tracks/dr-plot-fixes.json";
@@ -270,6 +270,7 @@ async function listVoyages(voyageDirectory) {
       comment: index.comment,
       startedAt: index.startedAt,
       stoppedAt: index.stoppedAt,
+      recomputedReplay: index.recomputedReplay,
     });
   }
   voyages.sort((left, right) => right.modifiedAt.localeCompare(left.modifiedAt));
@@ -283,9 +284,15 @@ async function readVoyageIndexSummary(voyagePath) {
       comment: typeof index.comment === "string" ? index.comment : "",
       startedAt: typeof index.startedAt === "string" ? index.startedAt : null,
       stoppedAt: typeof index.stoppedAt === "string" ? index.stoppedAt : null,
+      recomputedReplay: summarizeRecomputedReplay(index.recomputedReplay),
     };
   } catch {
-    return { comment: "", startedAt: null, stoppedAt: null };
+    return {
+      comment: "",
+      startedAt: null,
+      stoppedAt: null,
+      recomputedReplay: null,
+    };
   }
 }
 
@@ -494,6 +501,7 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
     fileName: path.basename(voyagePath),
     sourceKind: "voyages",
     comment: index.comment || "",
+    recomputedReplay: summarizeRecomputedReplay(index.recomputedReplay),
     gpxUrl: `/plugins/signalk-ajrm-marine-voyage-viewer/files/voyages/${encodeURIComponent(path.basename(voyagePath))}/track.gpx`,
     ownContext,
     summary,
@@ -734,7 +742,7 @@ function scanRecord(record, ownContext, result, window) {
         }
       } else if (ownContext && context === ownContext && valuePath === "environment.depth.belowTransducer") {
         if (!isInsideWindow(timestamp, window)) continue;
-        const meters = Number(value);
+        const meters = numberOrNull(value);
         if (Number.isFinite(meters)) {
           result.minDepthMeters =
             result.minDepthMeters == null ? meters : Math.min(result.minDepthMeters, meters);
@@ -763,6 +771,12 @@ function normalizeDrTrackSample(value, fallbackTimestamp = null) {
     gps,
     operational,
     integrity,
+    integrityAssurance: normalizeIntegrityAssurance(state.integrityAssurance),
+    navigationReference:
+      normalizeNavigationReferenceProvenance(state.navigationReference) ||
+      normalizeNavigationReferenceProvenance(
+        state.navigationProvenance?.navigationReference,
+      ),
     reasons: Array.isArray(state.reasons) ? state.reasons.slice(0, 5) : [],
   };
 }
@@ -775,6 +789,12 @@ function normalizeGpsIntegritySample(value, fallbackTimestamp = null) {
   const diagnostics = state.diagnostics && typeof state.diagnostics === "object" ? state.diagnostics : {};
   const operational = state.operationalDeadReckoning || state.deadReckoning || {};
   const integrity = state.integrityDeadReckoning || {};
+  const integrityAssurance = normalizeIntegrityAssurance(state.integrityAssurance);
+  const navigationReference =
+    normalizeNavigationReferenceProvenance(state.navigationReference) ||
+    normalizeNavigationReferenceProvenance(
+      state.navigationProvenance?.navigationReference,
+    );
   return {
     ts,
     trust: stringOrNull(state.trust) || "unknown",
@@ -794,6 +814,10 @@ function normalizeGpsIntegritySample(value, fallbackTimestamp = null) {
     current: {
       available: state.current?.available === true,
       source: stringOrNull(state.current?.source),
+      providerSource: stringOrNull(state.current?.providerSource),
+      origin: stringOrNull(state.current?.origin),
+      gpsDependent: booleanOrNull(state.current?.gpsDependent),
+      quality: stringOrNull(state.current?.quality),
       ageSeconds: numberOrNull(state.current?.ageSeconds),
       driftKnots: numberOrNull(state.current?.driftKnots),
       setTrueDegrees: numberOrNull(state.current?.setTrueDegrees),
@@ -804,12 +828,34 @@ function normalizeGpsIntegritySample(value, fallbackTimestamp = null) {
       operationalUncertaintyRadiusMeters: numberOrNull(
         operational.uncertaintyRadiusMeters ?? diagnostics.deadReckoning?.operationalUncertaintyRadiusMeters,
       ),
+      operationalGpsDependent: booleanOrNull(operational.gpsDependent),
+      operationalLeewayStatus: stringOrNull(operational.leewayStatus),
+      operationalCurrentOrigin: stringOrNull(operational.currentOrigin),
+      operationalProvenance: normalizeDrProvenance(operational.provenance),
       integritySource: stringOrNull(integrity.source) || stringOrNull(diagnostics.deadReckoning?.integritySource),
       integrityAgeSeconds: numberOrNull(integrity.ageSeconds ?? diagnostics.deadReckoning?.integrityAgeSeconds),
       integrityUncertaintyRadiusMeters: numberOrNull(
         integrity.uncertaintyRadiusMeters ?? diagnostics.deadReckoning?.integrityUncertaintyRadiusMeters,
       ),
+      integrityAssurance: stringOrNull(integrity.assurance) || integrityAssurance?.status || null,
+      integrityComparisonAvailable:
+        booleanOrNull(integrity.comparisonAvailable) ??
+        integrityAssurance?.comparisonAvailable ??
+        null,
+      integrityUnavailableReason:
+        longStringOrNull(integrity.unavailableReason) ||
+        integrityAssurance?.reason ||
+        null,
+      integrityGpsDependent: booleanOrNull(integrity.gpsDependent),
+      integrityLeewayStatus:
+        stringOrNull(integrity.leewayStatus) ||
+        integrityAssurance?.leewayStatus ||
+        null,
+      integrityCurrentOrigin: stringOrNull(integrity.currentOrigin),
+      integrityProvenance: normalizeDrProvenance(integrity.provenance),
     },
+    integrityAssurance,
+    navigationReference,
     diagnostics: {
       contract: stringOrNull(diagnostics.contract),
       decision: diagnostics.decision && typeof diagnostics.decision === "object"
@@ -921,6 +967,7 @@ function extractMmsi(value) {
 }
 
 function countOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? Math.floor(number) : null;
 }
@@ -928,16 +975,94 @@ function countOrNull(value) {
 function normalizeDrPoint(value) {
   const source = value?.position || value;
   if (!source) return null;
-  const lat = Number(source.lat ?? source.latitude);
-  const lon = Number(source.lon ?? source.longitude);
+  const lat = numberOrNull(source.lat ?? source.latitude);
+  const lon = numberOrNull(source.lon ?? source.longitude);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   return {
     lat,
     lon,
-    source: value?.source || null,
+    source: stringOrNull(value?.source),
     ageSeconds: numberOrNull(value?.ageSeconds),
     uncertaintyRadiusMeters: numberOrNull(value?.uncertaintyRadiusMeters),
+    gpsDependent: booleanOrNull(value?.gpsDependent),
+    leewayStatus: stringOrNull(value?.leewayStatus),
+    currentOrigin: stringOrNull(value?.currentOrigin),
+    assurance: stringOrNull(value?.assurance),
+    comparisonAvailable: booleanOrNull(value?.comparisonAvailable),
+    unavailableReason: longStringOrNull(value?.unavailableReason),
+    provenance: normalizeDrProvenance(value?.provenance),
   };
+}
+
+function normalizeIntegrityAssurance(value) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    status: stringOrNull(value.status),
+    comparisonAvailable: booleanOrNull(value.comparisonAvailable),
+    reason: longStringOrNull(value.reason),
+    leewayStatus: stringOrNull(value.leewayStatus),
+  };
+}
+
+function normalizeNavigationReferenceProvenance(value) {
+  if (
+    !value ||
+    value.contract !== "ajrm-marine-navigation-reference" ||
+    Number(value.schemaVersion) !== 1
+  ) {
+    return null;
+  }
+  const reference = value.clockReference;
+  return {
+    contract: value.contract,
+    schemaVersion: 1,
+    status: stringOrNull(value.status),
+    clockReference:
+      reference && typeof reference === "object"
+        ? {
+            kind: stringOrNull(reference.kind),
+            source: stringOrNull(reference.source),
+            method: stringOrNull(reference.method),
+            ageMs: numberOrNull(reference.ageMs),
+            uncertaintyRad: numberOrNull(reference.uncertaintyRad),
+            gpsDependent: booleanOrNull(reference.gpsDependent),
+          }
+        : null,
+  };
+}
+
+function normalizeDrProvenance(value) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    heading: normalizeDrEvidence(value.heading),
+    trackThroughWater: normalizeDrEvidence(value.trackThroughWater),
+    speedThroughWater: normalizeDrEvidence(value.speedThroughWater),
+    current: normalizeDrEvidence(value.current),
+    leeway: normalizeDrEvidence(value.leeway),
+  };
+}
+
+function normalizeDrEvidence(value) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    source: stringOrNull(value.source),
+    sourceKind: stringOrNull(value.sourceKind),
+    method: stringOrNull(value.method),
+    origin: stringOrNull(value.origin),
+    ageMs: numberOrNull(value.ageMs),
+    uncertaintyRad: numberOrNull(value.uncertaintyRad),
+    gpsDependent: booleanOrNull(value.gpsDependent),
+  };
+}
+
+function longStringOrNull(value) {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, 500)
+    : null;
+}
+
+function booleanOrNull(value) {
+  return typeof value === "boolean" ? value : null;
 }
 
 function normalizeDrPlotFixes(value) {
@@ -949,8 +1074,8 @@ function normalizeDrPlotFixes(value) {
 
 function normalizeDrPlotFix(value) {
   const source = value?.position || {};
-  const lat = Number(source.lat ?? source.latitude);
-  const lon = Number(source.lon ?? source.longitude);
+  const lat = numberOrNull(source.lat ?? source.latitude);
+  const lon = numberOrNull(source.lon ?? source.longitude);
   const timestampMs = Date.parse(value?.timestamp);
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(timestampMs)) return null;
   return {
@@ -964,6 +1089,34 @@ function normalizeDrPlotFix(value) {
     trust: stringOrNull(value.trust),
     drSource: stringOrNull(value.drSource),
     uncertaintyRadiusMeters: numberOrNull(value.uncertaintyRadiusMeters),
+    drGpsDependent: booleanOrNull(value.drGpsDependent),
+    drLeewayStatus: stringOrNull(value.drLeewayStatus),
+    drCurrentOrigin: stringOrNull(value.drCurrentOrigin),
+    drHeadingSource: stringOrNull(value.drHeadingSource),
+    drTrackThroughWaterSource: stringOrNull(value.drTrackThroughWaterSource),
+    drSpeedThroughWaterSource: stringOrNull(value.drSpeedThroughWaterSource),
+    drCurrentSource: stringOrNull(value.drCurrentSource),
+    drLeewaySource: stringOrNull(value.drLeewaySource),
+    integritySource: stringOrNull(value.integritySource),
+    integrityAssurance: stringOrNull(value.integrityAssurance),
+    integrityComparisonAvailable: booleanOrNull(value.integrityComparisonAvailable),
+    integrityUnavailableReason: longStringOrNull(value.integrityUnavailableReason),
+    integrityAgeSeconds: numberOrNull(value.integrityAgeSeconds),
+    integrityUncertaintyRadiusMeters: numberOrNull(value.integrityUncertaintyRadiusMeters),
+    integrityGpsDependent: booleanOrNull(value.integrityGpsDependent),
+    integrityLeewayStatus: stringOrNull(value.integrityLeewayStatus),
+    integrityCurrentOrigin: stringOrNull(value.integrityCurrentOrigin),
+    integrityHeadingSource: stringOrNull(value.integrityHeadingSource),
+    integrityTrackThroughWaterSource: stringOrNull(value.integrityTrackThroughWaterSource),
+    integritySpeedThroughWaterSource: stringOrNull(value.integritySpeedThroughWaterSource),
+    integrityCurrentSource: stringOrNull(value.integrityCurrentSource),
+    integrityLeewaySource: stringOrNull(value.integrityLeewaySource),
+    referenceKind: stringOrNull(value.referenceKind),
+    referenceSource: stringOrNull(value.referenceSource),
+    referenceMethod: stringOrNull(value.referenceMethod),
+    referenceAgeSeconds: numberOrNull(value.referenceAgeSeconds),
+    referenceUncertaintyDegrees: numberOrNull(value.referenceUncertaintyDegrees),
+    referenceGpsDependent: booleanOrNull(value.referenceGpsDependent),
     lastTrustedFixAgeSeconds: numberOrNull(value.lastTrustedFixAgeSeconds),
     distanceFromLastTrustedFixMeters: numberOrNull(value.distanceFromLastTrustedFixMeters),
     stwMps: numberOrNull(value.stwMps),
@@ -988,6 +1141,12 @@ function buildDrTracks(samples, maxTrackPoints, source) {
   const operational = [];
   const integrity = [];
   const recoveryJumps = [];
+  let suppressedIntegrityComparisons = 0;
+  let lastSuppressedIntegrityComparison = null;
+  let latestOperationalEvidence = null;
+  let latestIntegrityEvidence = null;
+  let latestIntegrityAssurance = null;
+  let latestNavigationReference = null;
   let previousOperational = null;
   let previousTrust = null;
   for (const sample of sorted) {
@@ -995,6 +1154,7 @@ function buildDrTracks(samples, maxTrackPoints, source) {
     if (sample.operational) {
       const point = drTrackPoint(sample, sample.operational);
       operational.push(point);
+      latestOperationalEvidence = drTrackEvidence(sample.operational);
       if (
         previousOperational &&
         previousTrust === "lost" &&
@@ -1010,9 +1170,23 @@ function buildDrTracks(samples, maxTrackPoints, source) {
       }
       previousOperational = point;
     }
-    if (sample.integrity && sample.gps && sample.trust !== "lost") {
-      integrity.push(drTrackPoint(sample, sample.integrity));
+    if (sample.integrity) {
+      latestIntegrityEvidence = drTrackEvidence(sample.integrity);
+      if (sample.gps && sample.trust !== "lost") {
+        if (integrityComparisonExplicitlyUnavailable(sample)) {
+          suppressedIntegrityComparisons += 1;
+          lastSuppressedIntegrityComparison = {
+            ts: sample.ts,
+            integrity: drTrackEvidence(sample.integrity),
+            assurance: sample.integrityAssurance || null,
+          };
+        } else {
+          integrity.push(drTrackPoint(sample, sample.integrity));
+        }
+      }
     }
+    if (sample.integrityAssurance) latestIntegrityAssurance = sample.integrityAssurance;
+    if (sample.navigationReference) latestNavigationReference = sample.navigationReference;
     previousTrust = sample.trust;
   }
   if (gps.length < 2 && operational.length < 2 && integrity.length < 2) return null;
@@ -1023,6 +1197,14 @@ function buildDrTracks(samples, maxTrackPoints, source) {
     operational: thinTrack(operational, maxTrackPoints),
     integrity: thinTrack(integrity, maxTrackPoints),
     recoveryJumps,
+    suppressedIntegrityComparisons,
+    lastSuppressedIntegrityComparison,
+    provenance: {
+      operational: latestOperationalEvidence,
+      integrity: latestIntegrityEvidence,
+      integrityAssurance: latestIntegrityAssurance,
+      navigationReference: latestNavigationReference,
+    },
     original: {
       gps: gps.length,
       operational: operational.length,
@@ -1038,8 +1220,38 @@ function drTrackPoint(sample, point) {
     lon: point.lon,
     trust: sample.trust || null,
     source: point.source || null,
+    ageSeconds: numberOrNull(point.ageSeconds),
     uncertaintyRadiusMeters: numberOrNull(point.uncertaintyRadiusMeters),
+    gpsDependent: booleanOrNull(point.gpsDependent),
+    leewayStatus: stringOrNull(point.leewayStatus),
+    currentOrigin: stringOrNull(point.currentOrigin),
+    assurance: stringOrNull(point.assurance),
+    comparisonAvailable: booleanOrNull(point.comparisonAvailable),
+    unavailableReason: longStringOrNull(point.unavailableReason),
+    provenance: normalizeDrProvenance(point.provenance),
   };
+}
+
+function drTrackEvidence(point) {
+  return {
+    source: stringOrNull(point?.source),
+    ageSeconds: numberOrNull(point?.ageSeconds),
+    uncertaintyRadiusMeters: numberOrNull(point?.uncertaintyRadiusMeters),
+    gpsDependent: booleanOrNull(point?.gpsDependent),
+    leewayStatus: stringOrNull(point?.leewayStatus),
+    currentOrigin: stringOrNull(point?.currentOrigin),
+    assurance: stringOrNull(point?.assurance),
+    comparisonAvailable: booleanOrNull(point?.comparisonAvailable),
+    unavailableReason: longStringOrNull(point?.unavailableReason),
+    provenance: normalizeDrProvenance(point?.provenance),
+  };
+}
+
+function integrityComparisonExplicitlyUnavailable(sample) {
+  return (
+    sample?.integrity?.comparisonAvailable === false ||
+    sample?.integrityAssurance?.comparisonAvailable === false
+  );
 }
 
 function preferredVoyageTrack(rawTrack, drTracks) {
@@ -1092,6 +1304,8 @@ function buildGpsIntegrityAnalysis(samples) {
   let maxPositionAgeSeconds = null;
   let maxOperationalUncertaintyMeters = null;
   let maxIntegrityUncertaintyMeters = null;
+  let integrityComparisonSamples = 0;
+  let integrityComparisonUnavailableSamples = 0;
 
   for (const sample of sorted) {
     maxPositionAgeSeconds = maxNumber(maxPositionAgeSeconds, sample.gps?.positionAgeSeconds);
@@ -1103,6 +1317,11 @@ function buildGpsIntegrityAnalysis(samples) {
       maxIntegrityUncertaintyMeters,
       sample.deadReckoning?.integrityUncertaintyRadiusMeters,
     );
+    if (sample.deadReckoning?.integrityComparisonAvailable === true) {
+      integrityComparisonSamples += 1;
+    } else if (sample.deadReckoning?.integrityComparisonAvailable === false) {
+      integrityComparisonUnavailableSamples += 1;
+    }
 
     const lost = isGpsLostIntegritySample(sample);
     if (lost && !lostStart) {
@@ -1131,18 +1350,53 @@ function buildGpsIntegrityAnalysis(samples) {
     longestLostSeconds = Math.max(longestLostSeconds, seconds);
   }
 
+  const finalSample = sorted[sorted.length - 1];
+  const finalAssurance =
+    finalSample.deadReckoning?.integrityAssurance ||
+    finalSample.integrityAssurance?.status ||
+    null;
+  const finalComparisonAvailable =
+    finalSample.deadReckoning?.integrityComparisonAvailable ??
+    finalSample.integrityAssurance?.comparisonAvailable ??
+    null;
+  const finalIntegrityReason =
+    finalSample.deadReckoning?.integrityUnavailableReason ||
+    finalSample.integrityAssurance?.reason ||
+    null;
+
   return {
     samples: sorted.length,
     firstAt: sorted[0].ts,
     lastAt: sorted[sorted.length - 1].ts,
-    finalTrust: sorted[sorted.length - 1].trust,
-    finalNotificationState: sorted[sorted.length - 1].notificationState,
+    finalTrust: finalSample.trust,
+    finalNotificationState: finalSample.notificationState,
     finalCounters,
+    provenance: {
+      operational: {
+        source: finalSample.deadReckoning?.operationalSource || null,
+        gpsDependent: finalSample.deadReckoning?.operationalGpsDependent ?? null,
+        leewayStatus: finalSample.deadReckoning?.operationalLeewayStatus || null,
+        currentOrigin: finalSample.deadReckoning?.operationalCurrentOrigin || null,
+        inputs: finalSample.deadReckoning?.operationalProvenance || null,
+      },
+      integrity: {
+        source: finalSample.deadReckoning?.integritySource || null,
+        assurance: finalAssurance,
+        comparisonAvailable: finalComparisonAvailable,
+        unavailableReason: finalIntegrityReason,
+        gpsDependent: finalSample.deadReckoning?.integrityGpsDependent ?? null,
+        leewayStatus: finalSample.deadReckoning?.integrityLeewayStatus || null,
+        currentOrigin: finalSample.deadReckoning?.integrityCurrentOrigin || null,
+        inputs: finalSample.deadReckoning?.integrityProvenance || null,
+      },
+      current: finalSample.current || null,
+      navigationReference: finalSample.navigationReference || null,
+    },
     events: events.slice(-250),
     summary: {
       available: true,
       samples: sorted.length,
-      finalTrust: sorted[sorted.length - 1].trust,
+      finalTrust: finalSample.trust,
       evaluations: finalCounters.evaluations ?? null,
       acceptedFixes: finalCounters.acceptedFixes ?? null,
       rejectedFixes: finalCounters.rejectedFixes ?? null,
@@ -1156,7 +1410,26 @@ function buildGpsIntegrityAnalysis(samples) {
       maxPositionAgeSeconds,
       maxOperationalUncertaintyMeters,
       maxIntegrityUncertaintyMeters,
-      lastReason: sorted[sorted.length - 1].reasons?.[0] || "",
+      finalIntegrityAssurance: finalAssurance,
+      finalComparisonAvailable,
+      finalIntegrityReason,
+      integrityComparisonSamples,
+      integrityComparisonUnavailableSamples,
+      finalOperationalGpsDependent:
+        finalSample.deadReckoning?.operationalGpsDependent ?? null,
+      finalOperationalLeewayStatus:
+        finalSample.deadReckoning?.operationalLeewayStatus || null,
+      finalOperationalCurrentOrigin:
+        finalSample.deadReckoning?.operationalCurrentOrigin || null,
+      finalIntegrityGpsDependent:
+        finalSample.deadReckoning?.integrityGpsDependent ?? null,
+      finalIntegrityLeewayStatus:
+        finalSample.deadReckoning?.integrityLeewayStatus || null,
+      finalIntegrityCurrentOrigin:
+        finalSample.deadReckoning?.integrityCurrentOrigin || null,
+      navigationReference: finalSample.navigationReference || null,
+      current: finalSample.current || null,
+      lastReason: finalSample.reasons?.[0] || "",
     },
   };
 }
@@ -1191,7 +1464,10 @@ function gpsIntegrityEvent(sample, type, label) {
     reasons: sample.reasons || [],
     counters: sample.counters || {},
     gps: sample.gps || {},
+    current: sample.current || {},
     deadReckoning: sample.deadReckoning || {},
+    integrityAssurance: sample.integrityAssurance || null,
+    navigationReference: sample.navigationReference || null,
   };
 }
 
@@ -1398,6 +1674,7 @@ function buildVoyageReview({
   paragraphs.push(
     `Voyage${comment} covered ${distance} over ${duration}. The track contains ${summary.trackPoints || 0} own-vessel GPS positions, with an average speed of ${formatReviewNumber(summary.averageSpeedKnots, 1, " knots")}.`,
   );
+  addRecomputedReplayReview(findings, paragraphs, index.recomputedReplay);
 
   if (summary.minDepthMeters != null) {
     paragraphs.push(`Minimum recorded depth was ${formatReviewNumber(summary.minDepthMeters, 1, " meters")}. Maximum recorded SOG was ${formatReviewNumber(summary.maxSogKnots, 1, " knots")}.`);
@@ -1467,6 +1744,29 @@ function buildVoyageReview({
     paragraphs.push(
       `GPS Integrity recorded ${gps.evaluations || gps.samples || 0} evaluations. Final trust was ${reviewTrustName(gps.finalTrust)}.`,
     );
+    if (gps.finalComparisonAvailable === false) {
+      const assurance = gps.finalIntegrityAssurance
+        ? ` (${gps.finalIntegrityAssurance} assurance)`
+        : "";
+      const reason = gps.finalIntegrityReason ? ` ${gps.finalIntegrityReason}` : "";
+      paragraphs.push(
+        `The provider explicitly reported that an independent GPS/DR comparison was unavailable${assurance}.${reason}`,
+      );
+    }
+    const clockReference = gps.navigationReference?.clockReference;
+    if (clockReference?.kind || clockReference?.source) {
+      const source = clockReference.source ? ` from ${clockReference.source}` : "";
+      const method = clockReference.method ? ` using ${clockReference.method}` : "";
+      const dependency =
+        clockReference.gpsDependent === true
+          ? " GPS-dependent."
+          : clockReference.gpsDependent === false
+            ? " GPS-independent."
+            : "";
+      paragraphs.push(
+        `Navigation Reference recorded ${clockReference.kind || "a clock reference"}${source}${method}.${dependency}`,
+      );
+    }
     addGpsReviewFindings(findings, gps);
   } else {
     findings.push({
@@ -1477,7 +1777,7 @@ function buildVoyageReview({
     });
   }
 
-  addDrReviewFindings(findings, drTracks, drPlotFixes);
+  addDrReviewFindings(findings, drTracks, drPlotFixes, gps);
   if (!summary.trackPoints) {
     findings.push({
       category: "voyage",
@@ -1540,10 +1840,15 @@ function buildReviewHighlights({ index, summary, gps, traffic, drPlotFixes }) {
   }
   if (gps?.available) {
     const gpsIssues = (gps.lostFixes || 0) + (gps.positionJumps || 0) + (gps.rejectedFixes || 0) + (gps.drDiscrepancies || 0) + (gps.degradedSignals || 0);
+    const comparisonUnavailable = gps.finalComparisonAvailable === false;
     highlights.push(reviewHighlight(
       "GPS Integrity",
-      gpsIssues ? `${gpsIssues} issue${gpsIssues === 1 ? "" : "s"}` : "healthy",
-      gpsIssues ? "amber" : "green",
+      gpsIssues
+        ? `${gpsIssues} issue${gpsIssues === 1 ? "" : "s"}`
+        : comparisonUnavailable
+          ? "fix checks clear · DR comparison unavailable"
+          : "healthy",
+      gpsIssues || comparisonUnavailable ? "amber" : "green",
     ));
   } else {
     highlights.push(reviewHighlight("GPS Integrity", "not recorded", "amber"));
@@ -1555,7 +1860,134 @@ function buildReviewHighlights({ index, summary, gps, traffic, drPlotFixes }) {
   } else if (index.stopReason) {
     highlights.push(reviewHighlight("Recording", index.stopReason, "green"));
   }
+  const replay = summarizeRecomputedReplay(index.recomputedReplay);
+  if (replay) {
+    const complete =
+      replay.coverage?.complete === true &&
+      replay.coverage?.preparedComplete === true &&
+      replay.coverage?.lastReason === "end of capture";
+    const isolated = replay.liveInputIsolation?.valid;
+    highlights.push(reviewHighlight(
+      "Recomputed replay",
+      !complete
+        ? "incomplete coverage"
+        : isolated === false
+          ? "live-input contamination"
+          : isolated === true
+            ? "complete and isolated"
+            : "complete · isolation unverified",
+      !complete || isolated === false
+        ? "red"
+        : isolated === true
+          ? "green"
+          : "amber",
+    ));
+  }
   return highlights;
+}
+
+function summarizeRecomputedReplay(value) {
+  if (!value || typeof value !== "object") return null;
+  if (
+    value.kind !== "recomputed-replay" &&
+    !value.parentVoyage &&
+    !value.result
+  ) {
+    return null;
+  }
+  const result = value.result && typeof value.result === "object"
+    ? value.result
+    : {};
+  const sourcePolicy =
+    result.sourcePolicy && typeof result.sourcePolicy === "object"
+      ? result.sourcePolicy
+      : value.sourcePolicy && typeof value.sourcePolicy === "object"
+        ? value.sourcePolicy
+        : null;
+  return {
+    kind: "recomputed-replay",
+    parentVoyage: stringOrNull(value.parentVoyage),
+    playbackMode:
+      stringOrNull(result.playbackMode) ||
+      stringOrNull(value.playbackMode),
+    rate: numberOrNull(result.rate ?? value.rate),
+    completedAt: stringOrNull(value.completedAt),
+    sourcePolicy,
+    resolvedSensorSourceIds: Array.isArray(
+      sourcePolicy?.resolvedSensorSourceIds,
+    )
+      ? sourcePolicy.resolvedSensorSourceIds
+          .map(stringOrNull)
+          .filter(Boolean)
+      : [],
+    sourceFilterStats:
+      result.sourceFilterStats &&
+      typeof result.sourceFilterStats === "object"
+        ? result.sourceFilterStats
+        : null,
+    coverage:
+      result.coverage && typeof result.coverage === "object"
+        ? result.coverage
+        : null,
+    liveInputIsolation:
+      result.liveInputIsolation &&
+      typeof result.liveInputIsolation === "object"
+        ? result.liveInputIsolation
+        : null,
+  };
+}
+
+function addRecomputedReplayReview(findings, paragraphs, value) {
+  const replay = summarizeRecomputedReplay(value);
+  if (!replay) return;
+  const parent = replay.parentVoyage || "an unknown parent voyage";
+  const sourceCount = replay.resolvedSensorSourceIds.length;
+  paragraphs.push(
+    `This is a recomputed replay child of ${parent}, using ${sourceCount} resolved sensor source${sourceCount === 1 ? "" : "s"} at ${Number.isFinite(replay.rate) ? `${replay.rate}x` : "an unrecorded rate"}.`,
+  );
+  const complete =
+    replay.coverage?.complete === true &&
+    replay.coverage?.preparedComplete === true &&
+    replay.coverage?.lastReason === "end of capture";
+  if (!complete) {
+    findings.push({
+      category: "software",
+      level: "red",
+      title: "Recomputed replay coverage incomplete",
+      detail:
+        "The child voyage does not prove complete pre-indexed parent coverage. Do not use it to validate recalculated navigation or alert behaviour.",
+    });
+    return;
+  }
+  if (replay.liveInputIsolation?.valid === false) {
+    const count = Number(
+      replay.liveInputIsolation.physicalUpdatesSeen || 0,
+    );
+    findings.push({
+      category: "software",
+      level: "red",
+      title: "Live sensor contamination detected",
+      detail: `${count} live physical-source update${count === 1 ? "" : "s"} were detected during recomputation. The resulting calculated data is not an isolated replay result.`,
+    });
+    return;
+  }
+  if (replay.liveInputIsolation?.valid !== true) {
+    findings.push({
+      category: "software",
+      level: "amber",
+      title: "Replay isolation not verified",
+      detail:
+        "Complete replay coverage was recorded, but the child does not contain an explicit valid live-input isolation result.",
+    });
+    return;
+  }
+  findings.push({
+    category: "software",
+    level: "green",
+    title: "Recomputed replay lineage verified",
+    detail:
+      "The child records complete pre-indexed parent coverage and no detected live physical-source contamination.",
+  });
 }
 
 function reviewHighlight(label, value, level = "green") {
@@ -1632,6 +2064,21 @@ function reviewBitePassed(report) {
 }
 
 function addGpsReviewFindings(findings, gps) {
+  const comparisonUnavailable = gps.finalComparisonAvailable === false;
+  if (comparisonUnavailable) {
+    const assurance = gps.finalIntegrityAssurance
+      ? `${gps.finalIntegrityAssurance} assurance`
+      : "the recorded assurance state";
+    const reason = gps.finalIntegrityReason
+      ? ` ${gps.finalIntegrityReason}`
+      : "";
+    findings.push({
+      category: "voyage",
+      level: "amber",
+      title: "Independent DR comparison unavailable",
+      detail: `GPS Integrity explicitly reported ${assurance} with no valid independent comparison.${reason}`,
+    });
+  }
   if (gps.lostFixes || gps.lostPeriods) {
     findings.push({
       category: "voyage",
@@ -1672,7 +2119,14 @@ function addGpsReviewFindings(findings, gps) {
       detail: `${gps.degradedSignals} weak-signal event${gps.degradedSignals === 1 ? "" : "s"} were recorded.`,
     });
   }
-  if (!gps.lostFixes && !gps.positionJumps && !gps.rejectedFixes && !gps.drDiscrepancies && !gps.degradedSignals) {
+  if (
+    !comparisonUnavailable &&
+    !gps.lostFixes &&
+    !gps.positionJumps &&
+    !gps.rejectedFixes &&
+    !gps.drDiscrepancies &&
+    !gps.degradedSignals
+  ) {
     findings.push({
       category: "voyage",
       level: "green",
@@ -1682,9 +2136,28 @@ function addGpsReviewFindings(findings, gps) {
   }
 }
 
-function addDrReviewFindings(findings, drTracks, drPlotFixes) {
+function addDrReviewFindings(findings, drTracks, drPlotFixes, gps = {}) {
   const jumps = drTracks?.recoveryJumps || [];
   const fixCount = (drPlotFixes?.plotFixes || []).length;
+  const trackAssurance = drTracks?.provenance?.integrityAssurance;
+  const trackIntegrity = drTracks?.provenance?.integrity;
+  const comparisonAvailable =
+    trackIntegrity?.comparisonAvailable ??
+    trackAssurance?.comparisonAvailable ??
+    null;
+  if (comparisonAvailable === false && gps.finalComparisonAvailable !== false) {
+    const status = trackIntegrity?.assurance || trackAssurance?.status;
+    const reason =
+      trackIntegrity?.unavailableReason ||
+      trackAssurance?.reason ||
+      "The provider did not publish an independent comparison for these samples.";
+    findings.push({
+      category: "voyage",
+      level: "amber",
+      title: "Independent DR comparison not plotted",
+      detail: `${status ? `${titleCaseForReview(status)} assurance: ` : ""}${reason}`,
+    });
+  }
   if (jumps.length) {
     const maxJump = jumps.reduce((max, jump) => Math.max(max, Number(jump.meters) || 0), 0);
     findings.push({
@@ -1709,6 +2182,12 @@ function addDrReviewFindings(findings, drTracks, drPlotFixes) {
       detail: "The review found no recorded DR plot fixes. Older voyages, or voyages without DR Plotter running, may not include them.",
     });
   }
+}
+
+function titleCaseForReview(value) {
+  return String(value || "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function highestReviewLevel(findings) {
@@ -1782,14 +2261,14 @@ function reviewTrustName(value) {
 }
 
 function formatReviewNumber(value, digits, suffix) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "not recorded";
+  const number = numberOrNull(value);
+  if (number === null) return "not recorded";
   return `${number.toFixed(digits)}${suffix}`;
 }
 
 function formatReviewDistance(meters) {
-  const value = Number(meters);
-  if (!Number.isFinite(value)) return "not recorded";
+  const value = numberOrNull(meters);
+  if (value === null) return "not recorded";
   if (value < 1000) return `${Math.round(value)} meters`;
   return `${(value / 1852).toFixed(value < 3704 ? 1 : 0)} miles`;
 }
@@ -2020,10 +2499,12 @@ function clampInteger(value, min, max, fallback) {
 }
 
 function isPosition(value) {
+  const latitude = numberOrNull(value?.latitude);
+  const longitude = numberOrNull(value?.longitude);
   return (
     value &&
-    Number.isFinite(Number(value.latitude)) &&
-    Number.isFinite(Number(value.longitude))
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude)
   );
 }
 
@@ -2039,11 +2520,12 @@ function isWindSpeedPath(valuePath) {
 }
 
 function metersPerSecondToKnots(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number * MPS_TO_KNOTS : null;
+  const number = numberOrNull(value);
+  return number !== null ? number * MPS_TO_KNOTS : null;
 }
 
 function numberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }

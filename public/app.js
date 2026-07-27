@@ -439,6 +439,7 @@ function renderFiles(files) {
       row.innerHTML = `
         <strong>${escapeHtml(file.fileName)}</strong>
         ${file.comment ? `<span class="file-comment">${escapeHtml(file.comment)}</span>` : ""}
+        ${file.recomputedReplay ? `<span class="file-comment">${escapeHtml(`Recomputed from ${file.recomputedReplay.parentVoyage || "unknown parent"} · ${replayLineageSummary(file.recomputedReplay)}`)}</span>` : ""}
         <span>${escapeHtml(fileMeta(file))}</span>
       `;
       row.addEventListener("click", () => selectFile(file));
@@ -875,7 +876,17 @@ function plotFixPopupHtml(fix) {
         ${fix.note ? popupRow("Note", fix.note) : ""}
         ${popupRow("GPS status", fix.trust ? fix.trust.toUpperCase() : "n/a")}
         ${popupRow("DR source", fix.drSource || "n/a")}
+        ${popupRow("DR GPS dependence", formatGpsDependence(fix.drGpsDependent))}
+        ${popupRow("DR leeway / current", formatLeewayAndCurrent(fix.drLeewayStatus, fix.drCurrentOrigin))}
+        ${popupRow("DR input sources", formatFixInputSources(fix, "dr"))}
         ${popupRow("Uncertainty", formatMeters(fix.uncertaintyRadiusMeters))}
+        ${popupRow("Integrity comparison", formatIntegrityComparison(fix))}
+        ${fix.integrityUnavailableReason ? popupRow("Integrity reason", fix.integrityUnavailableReason) : ""}
+        ${popupRow("Integrity source", fix.integritySource || "n/a")}
+        ${popupRow("Integrity GPS dependence", formatGpsDependence(fix.integrityGpsDependent))}
+        ${popupRow("Integrity leeway / current", formatLeewayAndCurrent(fix.integrityLeewayStatus, fix.integrityCurrentOrigin))}
+        ${popupRow("Integrity inputs", formatFixInputSources(fix, "integrity"))}
+        ${popupRow("Navigation reference", formatFixNavigationReference(fix))}
         ${popupRow("Last trusted GPS", formatAge(fix.lastTrustedFixAgeSeconds))}
         ${popupRow("DR distance since GPS", formatDistance(fix.distanceFromLastTrustedFixMeters))}
         ${popupRow("STW / heading", `${formatKnotsFromMps(fix.stwMps)} / ${formatDegrees(fix.headingTrueDegrees)}`)}
@@ -892,6 +903,54 @@ function plotFixTitle(fix) {
   if (fix.plotType === "observed-fix") return "Observed fix";
   if (fix.plotType === "timed" || fix.automatic) return "Timed plot fix";
   return "Manual plot fix";
+}
+
+function formatGpsDependence(value, fallback = "n/a") {
+  if (value === true) return "GPS-dependent";
+  if (value === false) return "GPS-independent";
+  return fallback;
+}
+
+function formatLeewayAndCurrent(leewayStatus, currentOrigin) {
+  const parts = [];
+  if (leewayStatus) parts.push(`leeway ${leewayStatus}`);
+  if (currentOrigin) parts.push(`current ${currentOrigin}`);
+  return parts.join(" · ") || "n/a";
+}
+
+function formatFixInputSources(fix, prefix) {
+  const fieldPrefix = prefix === "integrity" ? "integrity" : "dr";
+  const inputs = [
+    ["heading", fix[`${fieldPrefix}HeadingSource`]],
+    ["track", fix[`${fieldPrefix}TrackThroughWaterSource`]],
+    ["STW", fix[`${fieldPrefix}SpeedThroughWaterSource`]],
+    ["current", fix[`${fieldPrefix}CurrentSource`]],
+    ["leeway", fix[`${fieldPrefix}LeewaySource`]],
+  ];
+  return inputs
+    .filter(([, source]) => source)
+    .map(([label, source]) => `${label} ${source}`)
+    .join(" · ") || "n/a";
+}
+
+function formatIntegrityComparison(fix) {
+  const parts = [];
+  if (fix.integrityComparisonAvailable === true) parts.push("Available");
+  if (fix.integrityComparisonAvailable === false) parts.push("Unavailable");
+  if (fix.integrityAssurance) parts.push(titleCase(fix.integrityAssurance));
+  return parts.join(" · ") || "not recorded";
+}
+
+function formatFixNavigationReference(fix) {
+  const parts = [];
+  if (fix.referenceKind) parts.push(titleCase(fix.referenceKind));
+  if (fix.referenceSource) parts.push(fix.referenceSource);
+  if (fix.referenceMethod) parts.push(fix.referenceMethod);
+  const dependency = formatGpsDependence(fix.referenceGpsDependent, "not recorded");
+  if (dependency !== "not recorded") parts.push(dependency);
+  const uncertainty = finiteNumberOrNull(fix.referenceUncertaintyDegrees);
+  if (uncertainty !== null) parts.push(`±${Math.abs(uncertainty).toFixed(1)} deg`);
+  return parts.join(" · ") || "n/a";
 }
 
 function addTrackLine(points, options) {
@@ -927,6 +986,7 @@ function addEndMarker(point, label, color) {
 
 function renderSummary(analysis) {
   const summary = analysis.summary || {};
+  const gpsIntegrity = analysis.gpsIntegrity || summary.gpsIntegrity;
   elements.summaryTitle.textContent = analysis.fileName || analysis.id || "Voyage";
   elements.summarySubtitle.textContent = `${formatDateTime(summary.startedAt)} → ${formatDateTime(summary.stoppedAt)}`;
   elements.downloadGpx.href = analysis.gpxUrl || gpxUrl(analysis.sourceKind || activeKind, analysis.fileName);
@@ -944,11 +1004,14 @@ function renderSummary(analysis) {
     ["Min depth", formatNumber(summary.minDepthMeters, 1, " m")],
     ["Points", `${summary.trackPoints || 0} (${analysis.track?.length || 0} plotted)`],
     ["DR track", drTrackSummary(analysis.drTracks)],
+    ["DR evidence", drEvidenceSummary(analysis.drTracks, gpsIntegrity)],
+    ["Integrity comparison", integrityAssuranceSummary(analysis.drTracks, gpsIntegrity)],
+    ["Navigation reference", navigationReferenceSummary(analysis.drTracks, gpsIntegrity)],
     ["DR fixes", drPlotFixSummary(analysis.drPlotFixes)],
-    ["GPS integrity", gpsIntegritySummary(analysis.gpsIntegrity || summary.gpsIntegrity)],
-    ["GPS outages", gpsOutageSummary(analysis.gpsIntegrity || summary.gpsIntegrity)],
-    ["GPS rejected", gpsRejectedSummary(analysis.gpsIntegrity || summary.gpsIntegrity)],
-    ["GPS/DR mismatch", gpsDrMismatchSummary(analysis.gpsIntegrity || summary.gpsIntegrity)],
+    ["GPS integrity", gpsIntegritySummary(gpsIntegrity)],
+    ["GPS outages", gpsOutageSummary(gpsIntegrity)],
+    ["GPS rejected", gpsRejectedSummary(gpsIntegrity)],
+    ["GPS/DR mismatch", gpsDrMismatchSummary(gpsIntegrity)],
     ["Traffic", trafficSummary(analysis.traffic || summary.traffic)],
     ["Snapshots", String(summary.snapshotCount || 0)],
     ["Start", summary.startReason || "—"],
@@ -956,6 +1019,12 @@ function renderSummary(analysis) {
   ];
   if (analysis.comment) {
     rows.push(["Comment", `“${analysis.comment}”`]);
+  }
+  if (analysis.recomputedReplay) {
+    rows.push([
+      "Replay lineage",
+      `${analysis.recomputedReplay.parentVoyage || "Unknown parent"} · ${replayLineageSummary(analysis.recomputedReplay)}`,
+    ]);
   }
   elements.summaryGrid.replaceChildren(
     ...rows.map(([label, value]) => {
@@ -1042,15 +1111,35 @@ function reviewLevelClass(level) {
   return "amber";
 }
 
+function replayLineageSummary(replay) {
+  if (!replay) return "—";
+  const complete =
+    replay.coverage &&
+    replay.coverage.complete === true &&
+    replay.coverage.preparedComplete === true &&
+    replay.coverage.lastReason === "end of capture";
+  if (!complete) return "incomplete coverage";
+  if (replay.liveInputIsolation && replay.liveInputIsolation.valid === false) {
+    return "live-input contamination detected";
+  }
+  if (replay.liveInputIsolation && replay.liveInputIsolation.valid === true) {
+    return "complete and isolated";
+  }
+  return "complete · isolation unverified";
+}
+
 function gpsIntegritySummary(gpsIntegrity) {
   const summary = gpsIntegrity?.summary || gpsIntegrity || {};
   if (!summary.available) return "—";
   const trust = summary.finalTrust ? titleCase(summary.finalTrust) : "Unknown";
   const evaluations = Number.isFinite(summary.evaluations) ? `${summary.evaluations} evals` : `${summary.samples || 0} samples`;
+  const comparison = summary.finalComparisonAvailable === false
+    ? ` · ${titleCase(summary.finalIntegrityAssurance || "DR")} comparison unavailable`
+    : "";
   const lastReason = summary.finalTrust && summary.finalTrust !== "normal" && summary.lastReason
     ? ` · ${summary.lastReason}`
     : "";
-  return `${trust} · ${evaluations}${lastReason}`;
+  return `${trust} · ${evaluations}${comparison}${lastReason}`;
 }
 
 function trafficSummary(traffic) {
@@ -1088,6 +1177,14 @@ function gpsDrMismatchSummary(gpsIntegrity) {
   const uncertainty = Number.isFinite(summary.maxOperationalUncertaintyMeters)
     ? ` · max DR ${Math.round(summary.maxOperationalUncertaintyMeters)} m`
     : "";
+  if (summary.finalComparisonAvailable === false) {
+    const assurance = summary.finalIntegrityAssurance
+      ? ` · ${titleCase(summary.finalIntegrityAssurance)}`
+      : "";
+    return mismatches
+      ? `${mismatches} recorded · now unavailable${assurance}${uncertainty}`
+      : `Unavailable${assurance}${uncertainty}`;
+  }
   return mismatches ? `${mismatches}${uncertainty}` : `None${uncertainty}`;
 }
 
@@ -1103,6 +1200,75 @@ function drTrackSummary(drTracks) {
   const operational = drTracks.original?.operational || (drTracks.operational || []).length;
   const jumps = (drTracks.recoveryJumps || []).length;
   return jumps ? `${operational} points · ${jumps} jump${jumps === 1 ? "" : "s"} · ${source}` : `${operational} points · ${source}`;
+}
+
+function drEvidenceSummary(drTracks, gpsIntegrity) {
+  const evidence =
+    drTracks?.provenance?.operational ||
+    gpsIntegrity?.provenance?.operational ||
+    null;
+  if (!evidence) return "—";
+  const parts = [];
+  if (evidence.source) parts.push(evidence.source);
+  const dependency = formatGpsDependence(evidence.gpsDependent, "not recorded");
+  if (dependency !== "not recorded") parts.push(dependency);
+  if (evidence.leewayStatus) parts.push(`leeway ${evidence.leewayStatus}`);
+  if (evidence.currentOrigin) parts.push(`current ${evidence.currentOrigin}`);
+  return parts.join(" · ") || "—";
+}
+
+function integrityAssuranceSummary(drTracks, gpsIntegrity) {
+  const trackAssurance = drTracks?.provenance?.integrityAssurance;
+  const trackIntegrity = drTracks?.provenance?.integrity;
+  const gpsSummary = gpsIntegrity?.summary || gpsIntegrity || {};
+  const assurance =
+    trackIntegrity?.assurance ||
+    trackAssurance?.status ||
+    gpsSummary.finalIntegrityAssurance ||
+    null;
+  const comparisonAvailable =
+    trackIntegrity?.comparisonAvailable ??
+    trackAssurance?.comparisonAvailable ??
+    gpsSummary.finalComparisonAvailable ??
+    null;
+  const parts = [];
+  if (assurance) parts.push(titleCase(assurance));
+  if (comparisonAvailable === true) parts.push("comparison active");
+  if (comparisonAvailable === false) parts.push("comparison unavailable");
+  const dependency =
+    trackIntegrity?.gpsDependent ??
+    gpsIntegrity?.provenance?.integrity?.gpsDependent ??
+    gpsSummary.finalIntegrityGpsDependent ??
+    null;
+  const dependencyText = formatGpsDependence(dependency, "not recorded");
+  if (dependencyText !== "not recorded") parts.push(dependencyText);
+  const suppressed = Number(drTracks?.suppressedIntegrityComparisons) || 0;
+  if (suppressed > 0) {
+    parts.push(`${suppressed} unavailable sample${suppressed === 1 ? "" : "s"} not plotted`);
+  }
+  return parts.join(" · ") || "—";
+}
+
+function navigationReferenceSummary(drTracks, gpsIntegrity) {
+  const reference =
+    drTracks?.provenance?.navigationReference ||
+    gpsIntegrity?.provenance?.navigationReference ||
+    gpsIntegrity?.summary?.navigationReference ||
+    gpsIntegrity?.navigationReference ||
+    null;
+  const clock = reference?.clockReference;
+  if (!clock) return "—";
+  const parts = [];
+  if (clock.kind) parts.push(titleCase(clock.kind));
+  if (clock.source) parts.push(clock.source);
+  if (clock.method) parts.push(clock.method);
+  const dependency = formatGpsDependence(clock.gpsDependent, "not recorded");
+  if (dependency !== "not recorded") parts.push(dependency);
+  const uncertainty = finiteNumberOrNull(clock.uncertaintyRad);
+  if (uncertainty !== null) {
+    parts.push(`±${Math.abs(uncertainty * 180 / Math.PI).toFixed(1)} deg`);
+  }
+  return parts.join(" · ") || "—";
 }
 
 function drPlotFixSummary(drPlotFixes) {
@@ -1157,40 +1323,40 @@ function formatTime(value) {
 }
 
 function formatPosition(point) {
-  const lat = Number(point?.lat);
-  const lon = Number(point?.lon);
+  const lat = finiteNumberOrNull(point?.lat);
+  const lon = finiteNumberOrNull(point?.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return "n/a";
   return `${Math.abs(lat).toFixed(5)}°${lat >= 0 ? "N" : "S"}, ${Math.abs(lon).toFixed(5)}°${lon >= 0 ? "E" : "W"}`;
 }
 
 function formatMeters(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? `${Math.round(number)} m` : "n/a";
+  const number = finiteNumberOrNull(value);
+  return number !== null ? `${Math.round(number)} m` : "n/a";
 }
 
 function formatDistance(value) {
-  const meters = Number(value);
-  if (!Number.isFinite(meters)) return "n/a";
+  const meters = finiteNumberOrNull(value);
+  if (meters === null) return "n/a";
   if (meters < 1000) return `${Math.round(meters)} m`;
   return `${(meters / 1852).toFixed(meters < 3704 ? 1 : 0)} miles`;
 }
 
 function formatAge(value) {
-  const seconds = Number(value);
-  if (!Number.isFinite(seconds)) return "n/a";
+  const seconds = finiteNumberOrNull(value);
+  if (seconds === null) return "n/a";
   if (seconds < 90) return `${Math.round(seconds)} s`;
   if (seconds < 7200) return `${Math.round(seconds / 60)} min`;
   return `${(seconds / 3600).toFixed(1)} h`;
 }
 
 function formatKnotsFromMps(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? `${(number * 1.9438444924406046).toFixed(1)} kn` : "n/a";
+  const number = finiteNumberOrNull(value);
+  return number !== null ? `${(number * 1.9438444924406046).toFixed(1)} kn` : "n/a";
 }
 
 function formatDegrees(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? `${Math.round(number)} deg` : "n/a";
+  const number = finiteNumberOrNull(value);
+  return number !== null ? `${Math.round(number)} deg` : "n/a";
 }
 
 function popupRow(label, value) {
@@ -1207,9 +1373,15 @@ function formatDuration(seconds) {
 }
 
 function formatNumber(value, digits, suffix) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "—";
+  const number = finiteNumberOrNull(value);
+  if (number === null) return "—";
   return `${number.toFixed(digits)}${suffix}`;
+}
+
+function finiteNumberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function formatBytes(bytes) {

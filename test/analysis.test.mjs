@@ -123,6 +123,22 @@ test("voyage list includes comment from bundle index", async () => {
       comment: "Evening engine test",
       startedAt: "2026-06-22T19:57:47.000Z",
       stoppedAt: "2026-06-22T20:09:00.000Z",
+      recomputedReplay: {
+        kind: "recomputed-replay",
+        parentVoyage: "voyage-parent.zip",
+        rate: 1,
+        sourcePolicy: {
+          resolvedSensorSourceIds: ["YDEN.2"],
+        },
+        result: {
+          coverage: {
+            complete: true,
+            preparedComplete: true,
+            lastReason: "end of capture",
+          },
+          liveInputIsolation: { valid: true },
+        },
+      },
     }),
   );
   const zipPath = path.join(dir, "voyage-20260622T195747Z.zip");
@@ -134,6 +150,9 @@ test("voyage list includes comment from bundle index", async () => {
   assert.equal(voyages[0].comment, "Evening engine test");
   assert.equal(voyages[0].startedAt, "2026-06-22T19:57:47.000Z");
   assert.equal(voyages[0].stoppedAt, "2026-06-22T20:09:00.000Z");
+  assert.equal(voyages[0].recomputedReplay.parentVoyage, "voyage-parent.zip");
+  assert.equal(voyages[0].recomputedReplay.coverage.complete, true);
+  assert.equal(voyages[0].recomputedReplay.liveInputIsolation.valid, true);
 });
 
 test("analyses reference-mode voyage bundles from AJRM Marine Logger files", async () => {
@@ -184,6 +203,72 @@ test("analyses reference-mode voyage bundles from AJRM Marine Logger files", asy
   assert.ok(analysis.review.highlights.some((highlight) => highlight.label === "Track points" && highlight.value === "2"));
 });
 
+test("recomputed child review exposes incomplete or contaminated lineage", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-recomputed-"));
+  const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-recomputed-bundle-"));
+  const logFile = path.join(dir, "capture-2026-07-27T120000Z.jsonl");
+  await fs.writeFile(
+    logFile,
+    [
+      captureRecord("2026-07-27T12:00:00.000Z", 56.0, -5.0, 2),
+      captureRecord("2026-07-27T12:10:00.000Z", 56.00833, -5.0, 3),
+    ].map((record) => JSON.stringify(record)).join("\n"),
+  );
+  await fs.writeFile(
+    path.join(bundleDir, "index.json"),
+    JSON.stringify({
+      id: "voyage-recomputed",
+      startedAt: "2026-07-27T12:00:00.000Z",
+      stoppedAt: "2026-07-27T12:10:00.000Z",
+      captureFiles: [],
+      captureReferences: [{
+        fileName: path.basename(logFile),
+        sourcePath: logFile,
+      }],
+      recomputedReplay: {
+        kind: "recomputed-replay",
+        parentVoyage: "voyage-parent.zip",
+        playbackMode: "sensor-only",
+        rate: 1,
+        sourcePolicy: {
+          resolvedSensorSourceIds: ["YDEN.2", "YDEN.4"],
+        },
+        result: {
+          coverage: {
+            complete: true,
+            preparedComplete: true,
+            lastReason: "end of capture",
+          },
+          liveInputIsolation: {
+            valid: false,
+            physicalUpdatesSeen: 3,
+            sources: { "YDEN.99": 3 },
+          },
+        },
+      },
+    }),
+  );
+  const zipPath = path.join(dir, "voyage-recomputed.zip");
+  await writeZip(zipPath, bundleDir, ["index.json"]);
+
+  const analysis = await _private.analyseVoyage(zipPath, {
+    maxTrackPoints: 100,
+    options: { logDirectory: dir },
+  });
+  assert.equal(analysis.recomputedReplay.parentVoyage, "voyage-parent.zip");
+  assert.equal(analysis.recomputedReplay.coverage.complete, true);
+  assert.equal(analysis.recomputedReplay.liveInputIsolation.valid, false);
+  assert.equal(analysis.review.softwareStatus, "red");
+  assert.ok(analysis.review.findings.some((finding) =>
+    finding.title === "Live sensor contamination detected" &&
+    finding.level === "red"
+  ));
+  assert.ok(analysis.review.highlights.some((highlight) =>
+    highlight.label === "Recomputed replay" &&
+    highlight.value === "live-input contamination"
+  ));
+});
+
 test("summarises GPS Integrity events from captured Signal K state", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-gps-integrity-"));
   const logFile = path.join(dir, "capture-2026-06-22T120000Z.jsonl");
@@ -221,8 +306,63 @@ test("summarises GPS Integrity events from captured Signal K state", async () =>
         decision: { positionJumpRejected: true, drDiscrepancyActive: true },
         thresholds: { gpsLostSeconds: 15, warningDrDiscrepancyMeters: 50, alarmDrDiscrepancyMeters: 150 },
       },
-      operationalDeadReckoning: { position: { latitude: 56.008, longitude: -5 }, source: "gps-locked", uncertaintyRadiusMeters: 75, ageSeconds: 0 },
-      integrityDeadReckoning: { position: { latitude: 56.007, longitude: -5 }, source: "heading-stw-current", uncertaintyRadiusMeters: 95, ageSeconds: 300 },
+      current: {
+        available: false,
+        source: null,
+        origin: null,
+        gpsDependent: null,
+        driftKnots: null,
+        setTrueDegrees: 0,
+      },
+      operationalDeadReckoning: {
+        position: { latitude: 56.008, longitude: -5 },
+        source: "gps-locked",
+        uncertaintyRadiusMeters: 75,
+        ageSeconds: 0,
+        gpsDependent: true,
+        leewayStatus: "unknown",
+        currentOrigin: "none",
+      },
+      integrityDeadReckoning: {
+        position: { latitude: 56.007, longitude: -5 },
+        source: "heading-stw",
+        uncertaintyRadiusMeters: 95,
+        ageSeconds: 300,
+        assurance: "reduced",
+        comparisonAvailable: false,
+        unavailableReason: "Independent current and leeway evidence are unavailable.",
+        gpsDependent: false,
+        leewayStatus: "unknown",
+        currentOrigin: null,
+        provenance: {
+          heading: {
+            source: "YDEN.4",
+            method: "magnetic-heading-plus-wmm",
+            gpsDependent: false,
+          },
+        },
+      },
+      integrityAssurance: {
+        status: "reduced",
+        comparisonAvailable: false,
+        reason: "Independent current and leeway evidence are unavailable.",
+        leewayStatus: "unknown",
+      },
+      navigationProvenance: {
+        navigationReference: {
+          contract: "ajrm-marine-navigation-reference",
+          schemaVersion: 1,
+          status: "heading",
+          clockReference: {
+            kind: "heading",
+            source: "YDEN.4",
+            method: "magnetic-heading-plus-wmm",
+            ageMs: 0,
+            uncertaintyRad: 0.087,
+            gpsDependent: false,
+          },
+        },
+      },
     }),
   ];
   await fs.writeFile(logFile, records.map((record) => JSON.stringify(record)).join("\n"));
@@ -238,6 +378,21 @@ test("summarises GPS Integrity events from captured Signal K state", async () =>
   assert.equal(analysis.summary.gpsIntegrity.rejectedFixes, 1);
   assert.equal(analysis.summary.gpsIntegrity.drDiscrepancies, 1);
   assert.equal(analysis.summary.gpsIntegrity.maxOperationalUncertaintyMeters, 75);
+  assert.equal(analysis.summary.gpsIntegrity.finalIntegrityAssurance, "reduced");
+  assert.equal(analysis.summary.gpsIntegrity.finalComparisonAvailable, false);
+  assert.equal(analysis.summary.gpsIntegrity.finalOperationalGpsDependent, true);
+  assert.equal(analysis.summary.gpsIntegrity.finalIntegrityGpsDependent, false);
+  assert.equal(
+    analysis.summary.gpsIntegrity.navigationReference.clockReference.source,
+    "YDEN.4",
+  );
+  assert.equal(analysis.gpsIntegrity.provenance.current.driftKnots, null);
+  assert.equal(analysis.gpsIntegrity.provenance.current.setTrueDegrees, 0);
+  assert.ok(
+    analysis.review.findings.some(
+      (finding) => finding.title === "Independent DR comparison unavailable",
+    ),
+  );
   assert.ok(analysis.gpsIntegrity.events.some((event) => event.type === "gps-lost"));
   assert.ok(analysis.gpsIntegrity.events.some((event) => event.type === "gps-recovered"));
   assert.ok(analysis.gpsIntegrity.events.some((event) => event.type === "position-jump"));
@@ -526,12 +681,84 @@ test("analyses bundled DR track overlay samples", async () => {
         operational: { lat: 56.004, lon: -5.0, source: "heading-stw-current" },
       },
       {
+        ts: "2026-06-22T12:08:00.000Z",
+        trust: "normal",
+        acceptedGps: true,
+        gps: { lat: 56.00833, lon: -5.0 },
+        operational: {
+          lat: 56.00833,
+          lon: -5.0,
+          source: "gps-locked",
+          uncertaintyRadiusMeters: null,
+          gpsDependent: true,
+          leewayStatus: "unknown",
+          currentOrigin: "none",
+        },
+        integrity: {
+          lat: 56.008,
+          lon: -5.0,
+          source: "heading-stw",
+          assurance: "reduced",
+          comparisonAvailable: false,
+          unavailableReason: "Independent current is unavailable.",
+          gpsDependent: false,
+          leewayStatus: "unknown",
+          currentOrigin: null,
+          provenance: {
+            heading: {
+              source: "YDEN.4",
+              method: "magnetic-heading-plus-wmm",
+              uncertaintyRad: 0.087,
+              gpsDependent: false,
+            },
+          },
+        },
+        integrityAssurance: {
+          status: "reduced",
+          comparisonAvailable: false,
+          reason: "Independent current is unavailable.",
+          leewayStatus: "unknown",
+        },
+        navigationReference: {
+          contract: "ajrm-marine-navigation-reference",
+          schemaVersion: 1,
+          status: "heading",
+          clockReference: {
+            kind: "heading",
+            source: "YDEN.4",
+            method: "magnetic-heading-plus-wmm",
+            ageMs: 250,
+            uncertaintyRad: 0.087,
+            gpsDependent: false,
+          },
+        },
+      },
+      {
         ts: "2026-06-22T12:10:00.000Z",
         trust: "normal",
         acceptedGps: true,
         gps: { lat: 56.00833, lon: -5.0 },
-        operational: { lat: 56.00833, lon: -5.0, source: "gps-locked" },
-        integrity: { lat: 56.007, lon: -5.0, source: "cog-sog" },
+        operational: {
+          lat: 56.00833,
+          lon: -5.0,
+          source: "gps-locked",
+          gpsDependent: true,
+        },
+        integrity: {
+          lat: 56.007,
+          lon: -5.0,
+          source: "heading-stw-current",
+          assurance: "full",
+          comparisonAvailable: true,
+          gpsDependent: false,
+          leewayStatus: "known",
+          currentOrigin: "independent-current",
+        },
+        integrityAssurance: {
+          status: "full",
+          comparisonAvailable: true,
+          leewayStatus: "known",
+        },
       },
     ].map((record) => JSON.stringify(record)).join("\n"),
   );
@@ -554,11 +781,29 @@ test("analyses bundled DR track overlay samples", async () => {
     options: { logDirectory: dir },
   });
   assert.equal(analysis.drTracks.source, "bundle");
-  assert.equal(analysis.track.length, 3);
+  assert.equal(analysis.track.length, 4);
   assert.equal(analysis.track[1].lat, 56.004);
-  assert.equal(analysis.drTracks.operational.length, 3);
-  assert.equal(analysis.drTracks.gps.length, 2);
+  assert.equal(analysis.drTracks.operational.length, 4);
+  assert.equal(analysis.drTracks.gps.length, 3);
   assert.equal(analysis.drTracks.integrity.length, 1);
+  assert.equal(analysis.drTracks.integrity[0].comparisonAvailable, true);
+  assert.equal(analysis.drTracks.suppressedIntegrityComparisons, 1);
+  assert.equal(
+    analysis.drTracks.lastSuppressedIntegrityComparison.assurance.reason,
+    "Independent current is unavailable.",
+  );
+  assert.equal(
+    analysis.drTracks.provenance.navigationReference.clockReference.source,
+    "YDEN.4",
+  );
+  assert.equal(
+    analysis.drTracks.provenance.navigationReference.clockReference.ageMs,
+    250,
+  );
+  assert.equal(
+    analysis.drTracks.provenance.operational.gpsDependent,
+    true,
+  );
   assert.equal(analysis.drTracks.recoveryJumps.length, 1);
   assert.ok(analysis.drTracks.recoveryJumps[0].meters > 400);
 });
@@ -586,9 +831,30 @@ test("analyses bundled DR plot fixes", async () => {
           position: { latitude: 56.004, longitude: -5.001 },
           trust: "lost",
           drSource: "heading-stw-current",
-          uncertaintyRadiusMeters: 42,
+          uncertaintyRadiusMeters: null,
+          drGpsDependent: false,
+          drLeewayStatus: "unknown",
+          drCurrentOrigin: "independent-current",
+          drHeadingSource: "YDEN.4",
+          drSpeedThroughWaterSource: "YDEN.44",
+          drCurrentSource: "tidal-provider",
+          integritySource: "heading-stw",
+          integrityAssurance: "reduced",
+          integrityComparisonAvailable: false,
+          integrityUnavailableReason: "Independent leeway evidence is unavailable.",
+          integrityGpsDependent: false,
+          integrityLeewayStatus: "unknown",
+          integrityCurrentOrigin: null,
+          integrityHeadingSource: "YDEN.4",
+          referenceKind: "heading",
+          referenceSource: "YDEN.4",
+          referenceMethod: "magnetic-heading-plus-wmm",
+          referenceAgeSeconds: 0,
+          referenceUncertaintyDegrees: 5,
+          referenceGpsDependent: false,
           stwMps: 1.5,
           headingTrueDegrees: 90,
+          currentDriftMps: 0,
         },
       ],
     }),
@@ -616,6 +882,15 @@ test("analyses bundled DR plot fixes", async () => {
   assert.equal(analysis.drPlotFixes.plotFixes[0].id, "fix-one");
   assert.equal(analysis.drPlotFixes.plotFixes[0].lat, 56.004);
   assert.equal(analysis.drPlotFixes.plotFixes[0].plotType, "gps-lost");
+  assert.equal(analysis.drPlotFixes.plotFixes[0].uncertaintyRadiusMeters, null);
+  assert.equal(analysis.drPlotFixes.plotFixes[0].currentDriftMps, 0);
+  assert.equal(analysis.drPlotFixes.plotFixes[0].drGpsDependent, false);
+  assert.equal(
+    analysis.drPlotFixes.plotFixes[0].integrityComparisonAvailable,
+    false,
+  );
+  assert.equal(analysis.drPlotFixes.plotFixes[0].referenceAgeSeconds, 0);
+  assert.equal(analysis.drPlotFixes.plotFixes[0].referenceSource, "YDEN.4");
 });
 
 test("analyses raw AJRM Marine Logger jsonl recordings", async () => {
@@ -708,6 +983,12 @@ test("web app exposes DR plot-fix overlay controls", async () => {
   assert.match(app, /className: "plot-fix-label-marker"/);
   assert.match(app, /iconSize: \[28, 28\]/);
   assert.match(app, /iconAnchor: \[14, 14\]/);
+  assert.match(app, /popupRow\("DR GPS dependence"/);
+  assert.match(app, /popupRow\("Integrity comparison"/);
+  assert.match(app, /popupRow\("Navigation reference"/);
+  assert.match(app, /\["DR evidence", drEvidenceSummary/);
+  assert.match(app, /\["Integrity comparison", integrityAssuranceSummary/);
+  assert.match(app, /if \(value === false\) return "GPS-independent"/);
   assert.match(app, /if \(fix\.plotType === "gps-return"\) return "GPS fix"/);
   assert.match(css, /\.plot-fix-symbol-marker\.estimated-position \.plot-fix-symbol/);
 });
