@@ -19,16 +19,28 @@ test("voyage downloads defer to Capture portable bundle builder when available",
   assert.match(source, /cannot safely download a complete voyage bundle from Voyage Viewer/);
 });
 
-test("download button fetches protected bundles as blobs", async () => {
+test("download button lets the browser stream large bundles directly to disk", async () => {
   const source = await fs.readFile(new URL("../public/app.js", import.meta.url), "utf8");
-  assert.match(source, /async function downloadSelectedFile\(event\)/);
-  assert.match(source, /event\.preventDefault\(\)/);
-  assert.match(source, /await fetch\(downloadUrl\(activeKind, fileName\)/);
-  assert.match(source, /await response\.blob\(\)/);
-  assert.match(source, /fileNameFromContentDisposition\(response\.headers\.get\("Content-Disposition"\)\)/);
-  assert.match(source, /downloadBlob\(blob, downloadName\)/);
-  assert.match(source, /elements\.downloadSelected\.href = "#"/);
-  assert.doesNotMatch(source, /elements\.downloadSelected\.href = downloadUrl/);
+  assert.match(source, /function downloadSelectedFile\(event\)/);
+  assert.match(source, /elements\.downloadSelected\.href = downloadUrl\(activeKind, fileName\)/);
+  assert.match(source, /browser will stream it directly to disk/);
+  const bundleDownload = source.slice(
+    source.indexOf("function downloadSelectedFile"),
+    source.indexOf("function analysisProgressUrl"),
+  );
+  assert.doesNotMatch(bundleDownload, /fetch\(/);
+  assert.doesNotMatch(bundleDownload, /response\.blob\(\)/);
+});
+
+test("large voyage analysis streams ZIP entries and reports actual progress", async () => {
+  const pluginSource = await fs.readFile(new URL("../plugin/index.js", import.meta.url), "utf8");
+  const appSource = await fs.readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.doesNotMatch(pluginSource, /require\("adm-zip"\)/);
+  assert.doesNotMatch(pluginSource, /\.getData\(\)/);
+  assert.match(pluginSource, /openZipEntryStream/);
+  assert.match(pluginSource, /analysis-progress/);
+  assert.match(appSource, /analysisProgressUrl/);
+  assert.doesNotMatch(appSource, /estimatedScanSeconds/);
 });
 
 test("publishes suite-facing status and review capability", async () => {
@@ -41,6 +53,10 @@ test("publishes suite-facing status and review capability", async () => {
   assert.match(source, /clipDirectory: options\.clipDirectory/);
   assert.match(source, /review:\s*{\s*supported: true,\s*schemaVersion: 2/s);
   assert.match(source, /capabilities:\s*{\s*plot: true,\s*download: true,\s*review: true/s);
+  assert.match(source, /streamingDownload: true/);
+  assert.match(source, /streamingAnalysis: true/);
+  assert.match(source, /analysisProgress: true/);
+  assert.match(source, /engineVersion: REVIEW_ENGINE_VERSION/);
 });
 
 test("track distance uses nautical miles", () => {
@@ -269,6 +285,113 @@ test("recomputed child review exposes incomplete or contaminated lineage", async
   ));
 });
 
+test("verifies durable recomputed completion separately from live-input isolation", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-verified-recomputed-"));
+  const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-verified-recomputed-bundle-"));
+  const voyageId = "voyage-recomputed-verified";
+  const captureFileName = "capture-2026-07-30T140000Z.jsonl";
+  const captureRelativePath = path.join("capture", captureFileName);
+  const captureContent = [
+    captureRecord("2026-07-30T14:00:00.000Z", 56.0, -5.0, 2),
+    captureRecord("2026-07-30T14:01:00.000Z", 56.001, -5.0, 2),
+  ].map((record) => JSON.stringify(record)).join("\n");
+  const captureBytes = Buffer.byteLength(captureContent);
+  const segment = {
+    index: 0,
+    fileName: captureFileName,
+    lines: 2,
+    bytes: captureBytes,
+    compressed: false,
+    finalized: true,
+    available: true,
+    error: null,
+  };
+  const result = {
+    coverage: {
+      complete: true,
+      inputComplete: true,
+      preparedComplete: true,
+      resultSegmentsComplete: true,
+      lastReason: "end of capture",
+    },
+    resultSegments: {
+      schemaVersion: 1,
+      complete: true,
+      incomplete: false,
+      aborted: false,
+      segmentsTotal: 1,
+      segmentsFinalized: 1,
+      errors: [],
+      segments: [segment],
+    },
+    liveInputIsolation: {
+      valid: true,
+      physicalUpdatesSeen: 0,
+      sources: {},
+    },
+  };
+  const recomputedReplay = {
+    kind: "recomputed-replay",
+    parentVoyage: "voyage-parent.zip",
+    complete: true,
+    incomplete: false,
+    verified: true,
+    status: "complete",
+    result,
+  };
+  await fs.mkdir(path.join(bundleDir, "capture"), { recursive: true });
+  await fs.mkdir(path.join(bundleDir, "system"), { recursive: true });
+  await fs.writeFile(path.join(bundleDir, captureRelativePath), captureContent);
+  await fs.writeFile(
+    path.join(bundleDir, "index.json"),
+    JSON.stringify({
+      id: voyageId,
+      incomplete: false,
+      recomputationVerified: true,
+      startedAt: "2026-07-30T14:00:00.000Z",
+      stoppedAt: "2026-07-30T14:01:00.000Z",
+      captureFiles: [captureFileName],
+      recomputedReplay,
+    }),
+  );
+  await fs.writeFile(
+    path.join(bundleDir, "system", "recomputed-replay-completion.json"),
+    JSON.stringify({
+      contract: "ajrm-marine-recomputed-completion",
+      contractVersion: 1,
+      voyageId,
+      verified: true,
+      recomputationVerified: true,
+      recomputedReplay,
+      replayResult: result,
+    }),
+  );
+  const zipPath = path.join(dir, `${voyageId}.zip`);
+  await writeZip(zipPath, bundleDir, [
+    "index.json",
+    captureRelativePath,
+    "system/recomputed-replay-completion.json",
+  ]);
+
+  const analysis = await _private.analyseVoyage(zipPath, {
+    maxTrackPoints: 100,
+    options: { logDirectory: dir },
+  });
+  assert.equal(analysis.replayVerification.checkpointValid, true);
+  assert.equal(analysis.replayVerification.coverageComplete, true);
+  assert.equal(analysis.replayVerification.embeddedSegmentsComplete, true);
+  assert.equal(analysis.replayVerification.completionVerified, true);
+  assert.equal(analysis.replayVerification.liveInputIsolationValid, true);
+  assert.ok(analysis.review.findings.some((finding) =>
+    finding.title === "Recomputed result packaging verified" &&
+    finding.level === "green"
+  ));
+  assert.ok(analysis.review.findings.some((finding) =>
+    finding.title === "Recomputed replay lineage verified" &&
+    finding.level === "green"
+  ));
+});
+
 test("summarises GPS Integrity events from captured Signal K state", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-gps-integrity-"));
   const logFile = path.join(dir, "capture-2026-06-22T120000Z.jsonl");
@@ -442,6 +565,19 @@ test("builds English voyage review with separate software and voyage-data lights
         priority: "danger",
       }),
     ]),
+    trafficTargetsRecord("2026-06-22T12:03:01.000Z", [{
+      encounter: {
+        announcementLeadSeconds: 8,
+        targetPositionProjection: {
+          usable: true,
+          projected: true,
+          ageMs: 42000,
+          projectionSeconds: 50,
+          reason: "projected",
+        },
+      },
+      freshness: { stale: false },
+    }]),
     captureRecord("2026-06-22T12:10:00.000Z", 56.00833, -5.0, 3),
   ];
   await fs.writeFile(logFile, records.map((record) => JSON.stringify(record)).join("\n"));
@@ -493,6 +629,11 @@ test("builds English voyage review with separate software and voyage-data lights
   assert.equal(analysis.traffic.advisories, 1);
   assert.equal(analysis.traffic.collisionAlerts, 1);
   assert.equal(analysis.traffic.closestCpaMeters, 80);
+  assert.equal(analysis.traffic.projection.targetObservations, 1);
+  assert.equal(analysis.traffic.projection.projectedPositions, 1);
+  assert.equal(analysis.traffic.projection.maxMeasurementAgeSeconds, 42);
+  assert.equal(analysis.traffic.projection.maxProjectionSeconds, 50);
+  assert.equal(analysis.traffic.projection.maxAnnouncementLeadSeconds, 8);
   assert.match(analysis.review.headline, /Software RED, voyage data AMBER/);
   assert.match(analysis.review.headline, /software: Built-in test failure/);
   assert.doesNotMatch(analysis.review.headline, /Collision alerts recorded/);
@@ -504,6 +645,7 @@ test("builds English voyage review with separate software and voyage-data lights
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("2 vessels encountered")));
   assert.ok(analysis.review.findings.some((finding) => finding.category === "software" && finding.level === "red"));
   assert.ok(analysis.review.findings.some((finding) => finding.title === "Traffic alerts reviewed" && finding.level === "green"));
+  assert.ok(analysis.review.findings.some((finding) => finding.title === "Traffic projection evidence reviewed" && finding.level === "green"));
   assert.ok(analysis.review.findings.some((finding) => finding.category === "voyage"));
 });
 
@@ -1058,6 +1200,30 @@ function trafficProjectionRecord(timestamp, active) {
                 serverTime: timestamp,
                 active,
                 recentActivity: [],
+              },
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function trafficTargetsRecord(timestamp, targets) {
+  return {
+    capturedAt: timestamp,
+    delta: {
+      context: "vessels.self",
+      updates: [
+        {
+          timestamp,
+          values: [
+            {
+              path: "plugins.ajrmMarineTraffic.targets",
+              value: {
+                contract: "ajrm-marine-traffic-targets",
+                schemaVersion: 1,
+                targets,
               },
             },
           ],

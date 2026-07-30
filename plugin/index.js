@@ -4,9 +4,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
-const { Readable } = require("node:stream");
 const zlib = require("node:zlib");
-const AdmZip = require("adm-zip");
+const yauzl = require("yauzl");
 const packageInfo = require("../package.json");
 
 const MPS_TO_KNOTS = 1.9438444924406046;
@@ -23,7 +22,10 @@ const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v1";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const REVIEW_SCHEMA_VERSION = 2;
-const REVIEW_ENGINE_VERSION = 10;
+const REVIEW_ENGINE_VERSION = 11;
+const MAX_ZIP_TEXT_ENTRY_BYTES = 64 * 1024 * 1024;
+const RECOMPUTED_COMPLETION_PATH = "system/recomputed-replay-completion.json";
+const TRAFFIC_TARGETS_PATH = "plugins.ajrmMarineTraffic.targets";
 const AJRM_MARINE_GPS_INTEGRITY_STATE_PATH = "plugins.ajrmMarineGpsIntegrity.navigationIntegrity";
 const DR_TRACK_RELATIVE_PATH = "tracks/dr-track.jsonl";
 const DR_PLOT_FIXES_RELATIVE_PATH = "tracks/dr-plot-fixes.json";
@@ -33,6 +35,7 @@ const STATUS_PATH = "plugins.ajrmMarineVoyageViewer";
 module.exports = function ajrmMarineVoyageViewer(app) {
   const plugin = {};
   let options = normalizeOptions({});
+  const analysisProgress = new Map();
 
   plugin.id = "signalk-ajrm-marine-voyage-viewer";
   plugin.name = "AJRM Marine Voyage Viewer";
@@ -99,6 +102,21 @@ module.exports = function ajrmMarineVoyageViewer(app) {
       }
     });
 
+    router.get("/files/:kind/:file/analysis-progress", (req, res) => {
+      try {
+        const kind = safeFileKind(req.params.kind);
+        const file = safeFileNameForKind(kind, req.params.file);
+        res.json({
+          ok: true,
+          progress:
+            analysisProgress.get(analysisProgressKey(kind, file)) ||
+            idleAnalysisProgress(kind, file),
+        });
+      } catch (error) {
+        res.status(400).json({ ok: false, error: error.message });
+      }
+    });
+
     router.get("/files/:kind/:file/download", async (req, res) => {
       let captureDownload = null;
       try {
@@ -149,12 +167,54 @@ module.exports = function ajrmMarineVoyageViewer(app) {
     });
 
     router.post("/files/:kind/:file/analyse", async (req, res) => {
+      let progressKey = null;
       try {
         const kind = safeFileKind(req.params.kind);
         const file = safeFileNameForKind(kind, req.params.file);
-        const analysis = await analyseFileSource(kind, file, options, options.maxTrackPoints);
+        progressKey = analysisProgressKey(kind, file);
+        setAnalysisProgress(analysisProgress, progressKey, {
+          kind,
+          fileName: file,
+          state: "running",
+          phase: "opening",
+          percent: 0,
+          message: `Opening ${file}`,
+        });
+        const analysis = await analyseFileSource(
+          kind,
+          file,
+          options,
+          options.maxTrackPoints,
+          {
+            onProgress(progress) {
+              setAnalysisProgress(analysisProgress, progressKey, {
+                kind,
+                fileName: file,
+                state: "running",
+                ...progress,
+              });
+            },
+          },
+        );
+        setAnalysisProgress(analysisProgress, progressKey, {
+          kind,
+          fileName: file,
+          state: "complete",
+          phase: "complete",
+          percent: 100,
+          message: "Voyage analysis complete",
+        });
         res.json({ ok: true, analysis });
       } catch (error) {
+        if (progressKey) {
+          setAnalysisProgress(analysisProgress, progressKey, {
+            state: "failed",
+            phase: "failed",
+            percent: 100,
+            message: error.message,
+            error: error.message,
+          });
+        }
         app.error(`[${plugin.id}] analyse file failed: ${error.stack || error.message}`);
         res.status(500).json({ ok: false, error: error.message });
       }
@@ -194,10 +254,14 @@ module.exports = function ajrmMarineVoyageViewer(app) {
         plot: true,
         download: true,
         review: true,
+        streamingDownload: true,
+        streamingAnalysis: true,
+        analysisProgress: true,
       },
       review: {
         supported: true,
         schemaVersion: 2,
+        engineVersion: REVIEW_ENGINE_VERSION,
       },
     };
   }
@@ -322,19 +386,84 @@ function sourcePathForKind(kind, file, currentOptions) {
   return path.join(directoryForKind(kind, currentOptions), file);
 }
 
-async function analyseFileSource(kind, file, currentOptions, maxTrackPoints, { useCache = true } = {}) {
+function analysisProgressKey(kind, file) {
+  return `${kind}:${file}`;
+}
+
+function idleAnalysisProgress(kind, fileName) {
+  return {
+    contract: "ajrm-marine-voyage-analysis-progress",
+    contractVersion: 1,
+    kind,
+    fileName,
+    state: "idle",
+    phase: "idle",
+    percent: 0,
+    message: "No analysis is running",
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function setAnalysisProgress(store, key, changes) {
+  const previous = store.get(key) || {};
+  store.set(key, {
+    contract: "ajrm-marine-voyage-analysis-progress",
+    contractVersion: 1,
+    ...previous,
+    ...changes,
+    percent: clampProgressPercent(changes.percent ?? previous.percent),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+function emitAnalysisProgress(onProgress, percent, phase, message, details = {}) {
+  if (typeof onProgress !== "function") return;
+  onProgress({
+    percent: clampProgressPercent(percent),
+    phase,
+    message,
+    ...details,
+  });
+}
+
+function clampProgressPercent(value) {
+  const number = Number(value);
+  return Number.isFinite(number)
+    ? Math.min(100, Math.max(0, Math.round(number * 10) / 10))
+    : 0;
+}
+
+async function analyseFileSource(
+  kind,
+  file,
+  currentOptions,
+  maxTrackPoints,
+  { useCache = true, onProgress = null } = {},
+) {
   const sourcePath = sourcePathForKind(kind, file, currentOptions);
   const source = await sourceFingerprint(sourcePath);
+  emitAnalysisProgress(onProgress, 2, "opening", `Opened ${file}`);
   if (useCache && isPlotCacheable(maxTrackPoints)) {
     const cached = await readFreshPlotCache(sourcePath, source, kind, file, maxTrackPoints);
-    if (cached) return cached;
+    if (cached) {
+      emitAnalysisProgress(onProgress, 100, "complete", "Loaded cached voyage analysis", {
+        cacheHit: true,
+      });
+      return cached;
+    }
   }
   const analysis = kind === "voyages"
-    ? await analyseVoyage(sourcePath, { maxTrackPoints, options: currentOptions })
-    : await analyseRecording(sourcePath, { kind, maxTrackPoints });
+    ? await analyseVoyage(sourcePath, {
+        maxTrackPoints,
+        options: currentOptions,
+        onProgress,
+      })
+    : await analyseRecording(sourcePath, { kind, maxTrackPoints, onProgress });
   if (useCache && isPlotCacheable(maxTrackPoints)) {
+    emitAnalysisProgress(onProgress, 97, "caching", "Saving voyage analysis cache");
     await writePlotCache(sourcePath, source, kind, file, maxTrackPoints, analysis);
   }
+  emitAnalysisProgress(onProgress, 100, "complete", "Voyage analysis complete");
   return analysis;
 }
 
@@ -453,8 +582,16 @@ async function freshSidecarPath(sidecarPath, source) {
   return stat.mtimeMs >= source.mtimeMs && stat.size > 0 ? sidecarPath : null;
 }
 
-async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, options: currentOptions = {} } = {}) {
+async function analyseVoyage(
+  voyagePath,
+  {
+    maxTrackPoints = MAX_TRACK_POINTS,
+    options: currentOptions = {},
+    onProgress = null,
+  } = {},
+) {
   await assertReadableFile(voyagePath);
+  emitAnalysisProgress(onProgress, 3, "opening-index", "Reading voyage index");
   const index = await readZipJson(voyagePath, "index.json");
   const captureFiles = Array.isArray(index.captureFiles) ? index.captureFiles : [];
   const captureReferences = Array.isArray(index.captureReferences) ? index.captureReferences : [];
@@ -466,7 +603,33 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
   );
   if (captureSources.length === 0) throw new Error(voyageCaptureSourceError(captureReferences));
 
-  const firstPass = await scanCaptureSources(captureSources, null);
+  const completionCheckpoint = await readOptionalZipJson(
+    voyagePath,
+    RECOMPUTED_COMPLETION_PATH,
+  );
+  const replayVerification = evaluateRecomputedCompletion({
+    index,
+    checkpoint: completionCheckpoint,
+    captureSources,
+  });
+  emitAnalysisProgress(
+    onProgress,
+    5,
+    "discovering-own-vessel",
+    `Scanning capture data to identify own vessel (pass 1 of 2)`,
+    { pass: 1, passes: 2, segmentsTotal: captureSources.length },
+  );
+  const firstPass = await scanCaptureSources(captureSources, null, null, {
+    onProgress(progress) {
+      emitAnalysisProgress(
+        onProgress,
+        5 + progress.ratio * 38,
+        "discovering-own-vessel",
+        `Pass 1 of 2 · segment ${progress.segmentIndex + 1}/${progress.segmentsTotal}`,
+        { ...progress, pass: 1, passes: 2 },
+      );
+    },
+  });
   const ownContext = chooseOwnContext(firstPass.positionCounts);
   if (!ownContext) {
     throw new Error("No own-vessel navigation.position samples found.");
@@ -475,16 +638,43 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
     startMs: Date.parse(index.startedAt || ""),
     endMs: Date.parse(index.stoppedAt || ""),
   };
-  const secondPass = await scanCaptureSources(captureSources, ownContext, voyageWindow);
+  emitAnalysisProgress(
+    onProgress,
+    43,
+    "analysing-voyage",
+    `Analysing own-vessel and suite data (pass 2 of 2)`,
+    { pass: 2, passes: 2, segmentsTotal: captureSources.length },
+  );
+  const secondPass = await scanCaptureSources(
+    captureSources,
+    ownContext,
+    voyageWindow,
+    {
+      onProgress(progress) {
+        emitAnalysisProgress(
+          onProgress,
+          43 + progress.ratio * 42,
+          "analysing-voyage",
+          `Pass 2 of 2 · segment ${progress.segmentIndex + 1}/${progress.segmentsTotal}`,
+          { ...progress, pass: 2, passes: 2 },
+        );
+      },
+    },
+  );
+  emitAnalysisProgress(onProgress, 87, "reading-navigation-evidence", "Reading DR and navigation evidence");
   const drTracks = (await readVoyageDrTracks(voyagePath, index, maxTrackPoints)) ||
     buildDrTracks(secondPass.drTrackSamples, maxTrackPoints, "capture");
   const track = preferredVoyageTrack(sortTrack(secondPass.track), drTracks);
   const drPlotFixes = await readVoyageDrPlotFixes(voyagePath, index);
   const gpsIntegrity = buildGpsIntegrityAnalysis(secondPass.gpsIntegritySamples);
-  const traffic = buildTrafficAnalysis(secondPass.trafficNotificationSamples);
+  const traffic = buildTrafficAnalysis(
+    secondPass.trafficNotificationSamples,
+    secondPass.trafficProjectionMetrics,
+  );
   const markers = hourlyMarkers(track);
   const summary = buildSummary(index, track, secondPass, firstPass, ownContext, gpsIntegrity, traffic);
-  const biteReports = readVoyageBiteReports(voyagePath, index);
+  emitAnalysisProgress(onProgress, 91, "reading-review-evidence", "Reading BITE and completion evidence");
+  const biteReports = await readVoyageBiteReports(voyagePath, index);
   const review = buildVoyageReview({
     index,
     track,
@@ -494,14 +684,17 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
     drTracks,
     drPlotFixes,
     biteReports,
+    replayVerification,
   });
 
+  emitAnalysisProgress(onProgress, 95, "building-review", "Building voyage review");
   return {
     id: index.id || path.basename(voyagePath, ".zip"),
     fileName: path.basename(voyagePath),
     sourceKind: "voyages",
     comment: index.comment || "",
     recomputedReplay: summarizeRecomputedReplay(index.recomputedReplay),
+    replayVerification,
     gpxUrl: `/plugins/signalk-ajrm-marine-voyage-viewer/files/voyages/${encodeURIComponent(path.basename(voyagePath))}/track.gpx`,
     ownContext,
     summary,
@@ -516,18 +709,45 @@ async function analyseVoyage(voyagePath, { maxTrackPoints = MAX_TRACK_POINTS, op
   };
 }
 
-async function analyseRecording(recordingPath, { kind = "logs", maxTrackPoints = MAX_TRACK_POINTS } = {}) {
+async function analyseRecording(
+  recordingPath,
+  { kind = "logs", maxTrackPoints = MAX_TRACK_POINTS, onProgress = null } = {},
+) {
   await assertReadableFile(recordingPath);
-  const firstPass = await scanRecordingLines(recordingPath, null);
+  const stat = await fs.promises.stat(recordingPath);
+  const firstPass = await scanRecordingLines(recordingPath, null, null, {
+    onProgress(bytes) {
+      emitAnalysisProgress(
+        onProgress,
+        5 + (bytes / Math.max(1, stat.size)) * 40,
+        "discovering-own-vessel",
+        "Scanning recording to identify own vessel (pass 1 of 2)",
+        { processedBytes: bytes, totalBytes: stat.size, pass: 1, passes: 2 },
+      );
+    },
+  });
   const ownContext = chooseOwnContext(firstPass.positionCounts);
   if (!ownContext) {
     throw new Error("No own-vessel navigation.position samples found.");
   }
-  const ownPass = await scanRecordingLines(recordingPath, ownContext);
+  const ownPass = await scanRecordingLines(recordingPath, ownContext, null, {
+    onProgress(bytes) {
+      emitAnalysisProgress(
+        onProgress,
+        45 + (bytes / Math.max(1, stat.size)) * 45,
+        "analysing-recording",
+        "Analysing recording (pass 2 of 2)",
+        { processedBytes: bytes, totalBytes: stat.size, pass: 2, passes: 2 },
+      );
+    },
+  });
   const track = sortTrack(ownPass.track);
   const drTracks = buildDrTracks(ownPass.drTrackSamples, maxTrackPoints, "capture");
   const gpsIntegrity = buildGpsIntegrityAnalysis(ownPass.gpsIntegritySamples);
-  const traffic = buildTrafficAnalysis(ownPass.trafficNotificationSamples);
+  const traffic = buildTrafficAnalysis(
+    ownPass.trafficNotificationSamples,
+    ownPass.trafficProjectionMetrics,
+  );
   const index = {
     id: path.basename(recordingPath).replace(/\.jsonl(\.gz)?$/i, ""),
     startedAt: track[0]?.ts || firstPass.sampleStart || recordingStartedAtFromFileName(path.basename(recordingPath)),
@@ -546,7 +766,9 @@ async function analyseRecording(recordingPath, { kind = "logs", maxTrackPoints =
     drTracks,
     drPlotFixes: null,
     biteReports: [],
+    replayVerification: null,
   });
+  emitAnalysisProgress(onProgress, 95, "building-review", "Building recording review");
   const fileName = path.basename(recordingPath);
   return {
     id: index.id,
@@ -568,16 +790,29 @@ async function analyseRecording(recordingPath, { kind = "logs", maxTrackPoints =
 
 async function resolveVoyageCaptureSources(voyagePath, captureFiles, captureReferences, currentOptions) {
   if (captureFiles.length) {
-    return captureFiles.map((captureFile) => ({
-      kind: "zip",
-      voyagePath,
-      innerPath: captureFile.startsWith("capture/") ? captureFile : `capture/${captureFile}`,
-    }));
+    const sources = [];
+    for (const captureFile of captureFiles) {
+      const innerPath = captureFile.startsWith("capture/")
+        ? captureFile
+        : `capture/${captureFile}`;
+      const entry = await zipEntryMetadata(voyagePath, innerPath);
+      if (!entry) continue;
+      sources.push({
+        kind: "zip",
+        voyagePath,
+        innerPath,
+        bytes: entry.uncompressedSize,
+      });
+    }
+    return sources;
   }
   const sources = [];
   for (const reference of captureReferences) {
     const sourcePath = await resolveCaptureReferencePath(reference, currentOptions);
-    if (sourcePath) sources.push({ kind: "file", path: sourcePath });
+    if (sourcePath) {
+      const stat = await fs.promises.stat(sourcePath);
+      sources.push({ kind: "file", path: sourcePath, bytes: stat.size });
+    }
   }
   return sources;
 }
@@ -639,13 +874,19 @@ function voyageCaptureSourceError(captureReferences) {
   return "Voyage bundle has no capture files or AJRM Marine Logger references.";
 }
 
-async function scanCaptureSources(captureSources, ownContext, window = null) {
+async function scanCaptureSources(
+  captureSources,
+  ownContext,
+  window = null,
+  { onProgress = null } = {},
+) {
   const result = {
     positionCounts: new Map(),
     track: [],
     drTrackSamples: [],
     gpsIntegritySamples: [],
     trafficNotificationSamples: [],
+    trafficProjectionMetrics: emptyTrafficProjectionMetrics(),
     speedSamples: [],
     maxSogKnots: null,
     maxApparentWindKnots: null,
@@ -654,27 +895,72 @@ async function scanCaptureSources(captureSources, ownContext, window = null) {
     sampleStart: null,
     sampleEnd: null,
   };
-  for (const source of captureSources) {
-    await readCaptureSourceLines(source, (record) => {
-      scanRecord(record, ownContext, result, window);
-    });
+  const totalBytes = captureSources.reduce(
+    (sum, source) => sum + Math.max(0, Number(source.bytes || 0)),
+    0,
+  );
+  let completedBytes = 0;
+  let lastProgressAt = 0;
+  for (let index = 0; index < captureSources.length; index += 1) {
+    const source = captureSources[index];
+    await readCaptureSourceLines(
+      source,
+      (record) => {
+        scanRecord(record, ownContext, result, window);
+      },
+      (sourceBytes) => {
+        const now = Date.now();
+        if (
+          typeof onProgress !== "function" ||
+          (now - lastProgressAt < 250 &&
+            sourceBytes < Number(source.bytes || 0))
+        ) {
+          return;
+        }
+        lastProgressAt = now;
+        const processedBytes = completedBytes + sourceBytes;
+        onProgress({
+          processedBytes,
+          totalBytes,
+          ratio: totalBytes > 0 ? Math.min(1, processedBytes / totalBytes) : 0,
+          segmentIndex: index,
+          segmentsTotal: captureSources.length,
+          segmentName: source.innerPath || path.basename(source.path || ""),
+        });
+      },
+    );
+    completedBytes += Math.max(0, Number(source.bytes || 0));
   }
   return result;
 }
 
-async function readCaptureSourceLines(source, onRecord) {
+async function readCaptureSourceLines(source, onRecord, onProgress = null) {
   if (source.kind === "zip") {
-    await readCaptureLines(source.voyagePath, source.innerPath, onRecord);
+    await readCaptureLines(
+      source.voyagePath,
+      source.innerPath,
+      onRecord,
+      onProgress,
+    );
     return;
   }
-  await readRecordingLines(source.path, onRecord);
+  await readRecordingLines(source.path, onRecord, onProgress);
 }
 
-async function scanRecordingLines(recordingPath, ownContext, window = null) {
+async function scanRecordingLines(
+  recordingPath,
+  ownContext,
+  window = null,
+  { onProgress = null } = {},
+) {
   const result = emptyScanResult();
-  await readRecordingLines(recordingPath, (record) => {
-    scanRecord(record, ownContext, result, window);
-  });
+  await readRecordingLines(
+    recordingPath,
+    (record) => {
+      scanRecord(record, ownContext, result, window);
+    },
+    onProgress,
+  );
   return result;
 }
 
@@ -685,6 +971,7 @@ function emptyScanResult() {
     drTrackSamples: [],
     gpsIntegritySamples: [],
     trafficNotificationSamples: [],
+    trafficProjectionMetrics: emptyTrafficProjectionMetrics(),
     speedSamples: [],
     maxSogKnots: null,
     maxApparentWindKnots: null,
@@ -713,6 +1000,13 @@ function scanRecord(record, ownContext, result, window) {
         if (!isInsideWindow(timestamp, window)) continue;
         const samples = normalizeTrafficNotificationSamples(value, timestamp, valuePath);
         result.trafficNotificationSamples.push(...samples);
+      } else if (valuePath === TRAFFIC_TARGETS_PATH) {
+        if (!isInsideWindow(timestamp, window)) continue;
+        accumulateTrafficProjectionMetrics(
+          result.trafficProjectionMetrics,
+          value,
+          timestamp,
+        );
       } else if (valuePath === "navigation.position" && isPosition(value)) {
         result.positionCounts.set(context, (result.positionCounts.get(context) || 0) + 1);
         touchSampleTimes(result, timestamp);
@@ -930,6 +1224,11 @@ function normalizeTrafficNotificationItem(item, fallbackTimestamp, valuePath) {
   if (!severity) return null;
   const size = trafficVesselSize(context.vesselSize);
   const cpaMeters = numberOrNull(context.cpaMeters);
+  const announcementSchedule =
+    context.announcementSchedule &&
+    typeof context.announcementSchedule === "object"
+      ? context.announcementSchedule
+      : null;
   return {
     ts: stringOrNull(item.timestamp) || fallbackTimestamp,
     eventId,
@@ -941,7 +1240,87 @@ function normalizeTrafficNotificationItem(item, fallbackTimestamp, valuePath) {
     targetContext: stringOrNull(context.targetContext),
     size,
     cpaMeters,
+    tcpaSeconds: numberOrNull(context.tcpaSeconds),
+    announcementSchedule: announcementSchedule
+      ? {
+          effectiveRepeatSeconds: numberOrNull(
+            announcementSchedule.effectiveRepeatSeconds,
+          ),
+          targetObservationAgeSeconds: numberOrNull(
+            announcementSchedule.targetObservationAgeSeconds,
+          ),
+          targetObservationMaxAgeSeconds: numberOrNull(
+            announcementSchedule.targetObservationMaxAgeSeconds,
+          ),
+          targetObservationRecent:
+            booleanOrNull(announcementSchedule.targetObservationRecent),
+          reason: stringOrNull(announcementSchedule.reason),
+        }
+      : null,
   };
+}
+
+function emptyTrafficProjectionMetrics() {
+  return {
+    available: false,
+    projectionUpdates: 0,
+    targetObservations: 0,
+    projectedPositions: 0,
+    unusablePositions: 0,
+    staleTargets: 0,
+    maxMeasurementAgeSeconds: null,
+    maxProjectionSeconds: null,
+    maxAnnouncementLeadSeconds: null,
+    reasons: {},
+    firstAt: null,
+    lastAt: null,
+  };
+}
+
+function accumulateTrafficProjectionMetrics(metrics, value, timestamp) {
+  const projection = unwrapValue(value);
+  if (!projection || typeof projection !== "object") return;
+  const targets = Array.isArray(projection.targets) ? projection.targets : [];
+  metrics.available = true;
+  metrics.projectionUpdates += 1;
+  metrics.firstAt = metrics.firstAt || timestamp || null;
+  metrics.lastAt = timestamp || metrics.lastAt;
+  for (const target of targets) {
+    const encounter =
+      target?.encounter && typeof target.encounter === "object"
+        ? target.encounter
+        : {};
+    const positionProjection =
+      encounter.targetPositionProjection &&
+      typeof encounter.targetPositionProjection === "object"
+        ? encounter.targetPositionProjection
+        : {};
+    metrics.targetObservations += 1;
+    if (positionProjection.projected === true) metrics.projectedPositions += 1;
+    if (positionProjection.usable === false) metrics.unusablePositions += 1;
+    if (target?.freshness?.stale === true) metrics.staleTargets += 1;
+    metrics.maxMeasurementAgeSeconds = maxNumber(
+      metrics.maxMeasurementAgeSeconds,
+      millisecondsToSeconds(positionProjection.ageMs),
+    );
+    metrics.maxProjectionSeconds = maxNumber(
+      metrics.maxProjectionSeconds,
+      numberOrNull(positionProjection.projectionSeconds),
+    );
+    metrics.maxAnnouncementLeadSeconds = maxNumber(
+      metrics.maxAnnouncementLeadSeconds,
+      numberOrNull(encounter.announcementLeadSeconds),
+    );
+    const reason = stringOrNull(positionProjection.reason);
+    if (reason && positionProjection.usable === false) {
+      metrics.reasons[reason] = (metrics.reasons[reason] || 0) + 1;
+    }
+  }
+}
+
+function millisecondsToSeconds(value) {
+  const milliseconds = numberOrNull(value);
+  return milliseconds === null ? null : milliseconds / 1000;
 }
 
 function isTrafficAlert({ provider, category }) {
@@ -1489,7 +1868,10 @@ function sortTrack(track) {
   return sorted;
 }
 
-function buildTrafficAnalysis(samples = []) {
+function buildTrafficAnalysis(
+  samples = [],
+  projectionMetrics = emptyTrafficProjectionMetrics(),
+) {
   const eventsById = new Map();
   for (const sample of samples) {
     if (!sample?.eventId) continue;
@@ -1535,8 +1917,19 @@ function buildTrafficAnalysis(samples = []) {
   };
   const advisories = events.filter((event) => event.severity === "advisory").length;
   const collisions = events.filter((event) => event.severity === "collision").length;
+  const scheduleSamples = events
+    .map((event) => event.announcementSchedule)
+    .filter(Boolean);
+  const maximumAnnouncementObservationAgeSeconds = scheduleSamples.reduce(
+    (maximum, schedule) =>
+      maxNumber(maximum, schedule.targetObservationAgeSeconds),
+    null,
+  );
+  const staleAnnouncementObservations = scheduleSamples.filter(
+    (schedule) => schedule.targetObservationRecent === false,
+  ).length;
   return {
-    available: events.length > 0,
+    available: events.length > 0 || projectionMetrics.available === true,
     events: events.length,
     advisories,
     collisionAlerts: collisions,
@@ -1553,6 +1946,17 @@ function buildTrafficAnalysis(samples = []) {
         }
       : null,
     vessels: vesselList.slice(0, 50),
+    projection: {
+      ...emptyTrafficProjectionMetrics(),
+      ...(projectionMetrics || {}),
+    },
+    announcementFreshness: {
+      available: scheduleSamples.length > 0,
+      samples: scheduleSamples.length,
+      maximumObservationAgeSeconds:
+        maximumAnnouncementObservationAgeSeconds,
+      staleObservations: staleAnnouncementObservations,
+    },
   };
 }
 
@@ -1590,31 +1994,31 @@ function buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity
   };
 }
 
-function readVoyageBiteReports(voyagePath, index = {}) {
+async function readVoyageBiteReports(voyagePath, index = {}) {
   try {
-    const zip = new AdmZip(voyagePath);
     const reports = [];
     const window = {
       startMs: Date.parse(index.startedAt || ""),
       stopMs: Date.parse(index.stoppedAt || ""),
     };
-    for (const entry of zip.getEntries()) {
-      if (entry.isDirectory) continue;
-      if (!/^system\/bite-reports\/.+\.json$/i.test(entry.entryName)) continue;
-      const parsed = JSON.parse(entry.getData().toString("utf8"));
+    const entries = await listZipEntries(voyagePath);
+    for (const entry of entries) {
+      if (/\/$/.test(entry.fileName)) continue;
+      if (!/^system\/bite-reports\/.+\.json$/i.test(entry.fileName)) continue;
+      const parsed = await readZipJson(voyagePath, entry.fileName);
       if (Array.isArray(parsed.reports)) {
-        const parent = normalizeBiteReport(parsed, entry.entryName);
+        const parent = normalizeBiteReport(parsed, entry.fileName);
         if (biteReportOverlapsWindow(parent, window)) {
           reports.push(parent);
-          for (const report of parsed.reports) reports.push(normalizeBiteReport(report, entry.entryName));
+          for (const report of parsed.reports) reports.push(normalizeBiteReport(report, entry.fileName));
         } else {
           for (const report of parsed.reports) {
-            const child = normalizeBiteReport(report, entry.entryName);
+            const child = normalizeBiteReport(report, entry.fileName);
             if (biteReportOverlapsWindow(child, window)) reports.push(child);
           }
         }
       } else {
-        const report = normalizeBiteReport(parsed, entry.entryName);
+        const report = normalizeBiteReport(parsed, entry.fileName);
         if (biteReportOverlapsWindow(report, window)) reports.push(report);
       }
     }
@@ -1662,6 +2066,7 @@ function buildVoyageReview({
   drTracks,
   drPlotFixes,
   biteReports = [],
+  replayVerification = null,
 }) {
   const findings = [];
   const paragraphs = [];
@@ -1674,7 +2079,12 @@ function buildVoyageReview({
   paragraphs.push(
     `Voyage${comment} covered ${distance} over ${duration}. The track contains ${summary.trackPoints || 0} own-vessel GPS positions, with an average speed of ${formatReviewNumber(summary.averageSpeedKnots, 1, " knots")}.`,
   );
-  addRecomputedReplayReview(findings, paragraphs, index.recomputedReplay);
+  addRecomputedReplayReview(
+    findings,
+    paragraphs,
+    index.recomputedReplay,
+    replayVerification,
+  );
 
   if (summary.minDepthMeters != null) {
     paragraphs.push(`Minimum recorded depth was ${formatReviewNumber(summary.minDepthMeters, 1, " meters")}. Maximum recorded SOG was ${formatReviewNumber(summary.maxSogKnots, 1, " knots")}.`);
@@ -1705,6 +2115,7 @@ function buildVoyageReview({
       title: "Traffic alerts reviewed",
       detail: `${traffic.collisionAlerts} collision alert${traffic.collisionAlerts === 1 ? "" : "s"} and ${traffic.advisories} advisor${traffic.advisories === 1 ? "y" : "ies"} were recorded for ${traffic.vesselsEncountered} vessel${traffic.vesselsEncountered === 1 ? "" : "s"}. Alert counts are informational and do not make the voyage data amber by themselves.`,
     });
+    addTrafficProjectionReview(findings, paragraphs, traffic);
   } else {
     findings.push({
       category: "voyage",
@@ -1801,7 +2212,14 @@ function buildVoyageReview({
     softwareReasons: reviewStatusReasons(softwareFindings, softwareStatus),
     voyageReasons: reviewStatusReasons(voyageFindings, voyageStatus),
   });
-  const highlights = buildReviewHighlights({ index, summary, gps, traffic, drPlotFixes });
+  const highlights = buildReviewHighlights({
+    index,
+    summary,
+    gps,
+    traffic,
+    drPlotFixes,
+    replayVerification,
+  });
   const conclusion = reviewConclusion({ status, softwareStatus, voyageStatus, softwareFindings, voyageFindings });
   return {
     schemaVersion: REVIEW_SCHEMA_VERSION,
@@ -1819,7 +2237,14 @@ function buildVoyageReview({
   };
 }
 
-function buildReviewHighlights({ index, summary, gps, traffic, drPlotFixes }) {
+function buildReviewHighlights({
+  index,
+  summary,
+  gps,
+  traffic,
+  drPlotFixes,
+  replayVerification = null,
+}) {
   const highlights = [
     reviewHighlight("Duration", formatSecondsForReview(summary.durationSeconds), "green"),
     reviewHighlight("Distance", Number.isFinite(summary.distanceNm) ? `${summary.distanceNm.toFixed(1)} NM` : "not recorded", Number.isFinite(summary.distanceNm) ? "green" : "amber"),
@@ -1869,14 +2294,22 @@ function buildReviewHighlights({ index, summary, gps, traffic, drPlotFixes }) {
     const isolated = replay.liveInputIsolation?.valid;
     highlights.push(reviewHighlight(
       "Recomputed replay",
-      !complete
+      replayVerification?.checkpointExpected === true &&
+      replayVerification?.completionVerified !== true
+        ? "completion evidence invalid"
+        : !complete
         ? "incomplete coverage"
         : isolated === false
           ? "live-input contamination"
           : isolated === true
             ? "complete and isolated"
             : "complete · isolation unverified",
-      !complete || isolated === false
+      !complete ||
+        isolated === false ||
+        (
+          replayVerification?.checkpointExpected === true &&
+          replayVerification?.completionVerified !== true
+        )
         ? "red"
         : isolated === true
           ? "green"
@@ -1884,6 +2317,54 @@ function buildReviewHighlights({ index, summary, gps, traffic, drPlotFixes }) {
     ));
   }
   return highlights;
+}
+
+function addTrafficProjectionReview(findings, paragraphs, traffic) {
+  const projection = traffic?.projection || {};
+  if (projection.available !== true) {
+    findings.push({
+      category: "voyage",
+      level: "amber",
+      title: "Traffic projection evidence unavailable",
+      detail:
+        "Traffic alerts were recorded, but the voyage does not include AJRM Marine Traffic target-projection evidence for AIS age and announcement-lag review.",
+    });
+    return;
+  }
+  paragraphs.push(
+    `Traffic projection review examined ${projection.targetObservations || 0} target observations across ${projection.projectionUpdates || 0} updates. Maximum AIS measurement age was ${formatReviewNumber(projection.maxMeasurementAgeSeconds, 1, " seconds")}; maximum forward projection was ${formatReviewNumber(projection.maxProjectionSeconds, 1, " seconds")}, including up to ${formatReviewNumber(projection.maxAnnouncementLeadSeconds, 1, " seconds")} of configured announcement lead.`,
+  );
+  if (projection.unusablePositions || projection.staleTargets) {
+    const reasons = Object.entries(projection.reasons || {})
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 4)
+      .map(([reason, count]) => `${reason} (${count})`)
+      .join(", ");
+    findings.push({
+      category: "voyage",
+      level: "amber",
+      title: "Traffic positions withheld or stale",
+      detail:
+        `${projection.unusablePositions || 0} target-position calculations were withheld and ${projection.staleTargets || 0} stale target observations were recorded${reasons ? `; reasons: ${reasons}` : ""}.`,
+    });
+  } else {
+    findings.push({
+      category: "voyage",
+      level: "green",
+      title: "Traffic projection evidence reviewed",
+      detail:
+        `${projection.projectedPositions || 0} target positions were projected without a recorded stale or unusable target-position decision.`,
+    });
+  }
+  if (traffic?.announcementFreshness?.staleObservations > 0) {
+    findings.push({
+      category: "voyage",
+      level: "amber",
+      title: "Traffic announcement used an old observation",
+      detail:
+        `${traffic.announcementFreshness.staleObservations} recorded traffic announcement schedule${traffic.announcementFreshness.staleObservations === 1 ? "" : "s"} marked the target observation as older than its permitted age.`,
+    });
+  }
 }
 
 function summarizeRecomputedReplay(value) {
@@ -1937,7 +2418,12 @@ function summarizeRecomputedReplay(value) {
   };
 }
 
-function addRecomputedReplayReview(findings, paragraphs, value) {
+function addRecomputedReplayReview(
+  findings,
+  paragraphs,
+  value,
+  replayVerification = null,
+) {
   const replay = summarizeRecomputedReplay(value);
   if (!replay) return;
   const parent = replay.parentVoyage || "an unknown parent voyage";
@@ -1945,6 +2431,31 @@ function addRecomputedReplayReview(findings, paragraphs, value) {
   paragraphs.push(
     `This is a recomputed replay child of ${parent}, using ${sourceCount} resolved sensor source${sourceCount === 1 ? "" : "s"} at ${Number.isFinite(replay.rate) ? `${replay.rate}x` : "an unrecorded rate"}.`,
   );
+  if (replayVerification?.checkpointExpected === true) {
+    paragraphs.push(
+      replayVerification.completionVerified === true
+        ? `The durable replay-completion checkpoint and all ${replayVerification.resultSegmentsTotal || 0} declared result segments were verified against the embedded files.`
+        : `The replay declares durable completion, but its checkpoint or result-segment evidence did not validate: ${(replayVerification.issues || []).join("; ") || "unknown completion-evidence failure"}.`,
+    );
+    if (replayVerification.completionVerified !== true) {
+      findings.push({
+        category: "software",
+        level: "red",
+        title: "Recomputed completion evidence invalid",
+        detail:
+          (replayVerification.issues || []).join("; ") ||
+          "The durable completion checkpoint or result-segment manifest could not be verified.",
+      });
+    } else {
+      findings.push({
+        category: "software",
+        level: "green",
+        title: "Recomputed result packaging verified",
+        detail:
+          "The completion checkpoint, coverage result, result-segment manifest, and embedded capture files agree.",
+      });
+    }
+  }
   const complete =
     replay.coverage?.complete === true &&
     replay.coverage?.preparedComplete === true &&
@@ -1988,6 +2499,109 @@ function addRecomputedReplayReview(findings, paragraphs, value) {
     detail:
       "The child records complete pre-indexed parent coverage and no detected live physical-source contamination.",
   });
+}
+
+function evaluateRecomputedCompletion({ index, checkpoint, captureSources }) {
+  const replay = summarizeRecomputedReplay(index?.recomputedReplay);
+  if (!replay) return null;
+  const rawReplay =
+    index.recomputedReplay && typeof index.recomputedReplay === "object"
+      ? index.recomputedReplay
+      : {};
+  const result =
+    rawReplay.result && typeof rawReplay.result === "object"
+      ? rawReplay.result
+      : {};
+  const manifest =
+    result.resultSegments && typeof result.resultSegments === "object"
+      ? result.resultSegments
+      : {};
+  const segments = Array.isArray(manifest.segments) ? manifest.segments : [];
+  const sourceByName = new Map(
+    (captureSources || []).map((source) => [
+      path.basename(source.innerPath || source.path || ""),
+      source,
+    ]),
+  );
+  const checkpointExpected =
+    index.recomputationVerified !== undefined ||
+    rawReplay.verified !== undefined ||
+    rawReplay.status === "complete";
+  const issues = [];
+  const checkpointValid =
+    checkpoint?.contract === "ajrm-marine-recomputed-completion" &&
+    Number(checkpoint?.contractVersion) === 1 &&
+    checkpoint?.voyageId === index.id &&
+    checkpoint?.verified === true &&
+    checkpoint?.recomputationVerified === true;
+  if (checkpointExpected && !checkpointValid) {
+    issues.push("durable completion checkpoint missing or invalid");
+  }
+  const coverageComplete =
+    replay.coverage?.complete === true &&
+    replay.coverage?.preparedComplete === true &&
+    replay.coverage?.lastReason === "end of capture" &&
+    replay.coverage?.resultSegmentsComplete === true;
+  if (!coverageComplete) issues.push("replay coverage is not complete");
+  const resultSegmentsComplete =
+    manifest.complete === true &&
+    manifest.incomplete !== true &&
+    manifest.aborted !== true &&
+    Number(manifest.segmentsTotal) === segments.length &&
+    Number(manifest.segmentsFinalized) === segments.length &&
+    (!Array.isArray(manifest.errors) || manifest.errors.length === 0);
+  if (!resultSegmentsComplete) {
+    issues.push("result-segment manifest is incomplete");
+  }
+  let embeddedSegmentsComplete = segments.length > 0;
+  for (const segment of segments) {
+    const source = sourceByName.get(path.basename(String(segment.fileName || "")));
+    const bytesMatch =
+      source &&
+      Number.isFinite(Number(segment.bytes)) &&
+      Number(source.bytes) === Number(segment.bytes);
+    if (
+      !source ||
+      !bytesMatch ||
+      segment.finalized !== true ||
+      segment.available !== true ||
+      segment.error
+    ) {
+      embeddedSegmentsComplete = false;
+      issues.push(
+        `embedded result segment ${segment.fileName || "unknown"} is missing, incomplete, or has a size mismatch`,
+      );
+    }
+  }
+  if (!segments.length) issues.push("result-segment manifest contains no segments");
+  const indexComplete =
+    index.incomplete !== true &&
+    index.recomputationVerified === true &&
+    rawReplay.complete === true &&
+    rawReplay.incomplete !== true &&
+    rawReplay.verified === true;
+  if (checkpointExpected && !indexComplete) {
+    issues.push("voyage index does not declare verified recomputation completion");
+  }
+  return {
+    contract: "ajrm-marine-voyage-recomputed-verification",
+    contractVersion: 1,
+    checkpointExpected,
+    checkpointPresent: Boolean(checkpoint),
+    checkpointValid,
+    coverageComplete,
+    resultSegmentsComplete,
+    embeddedSegmentsComplete,
+    resultSegmentsTotal: segments.length,
+    completionVerified:
+      (!checkpointExpected || checkpointValid) &&
+      coverageComplete &&
+      resultSegmentsComplete &&
+      embeddedSegmentsComplete &&
+      (!checkpointExpected || indexComplete),
+    liveInputIsolationValid: replay.liveInputIsolation?.valid ?? null,
+    issues: [...new Set(issues)],
+  };
 }
 
 function reviewHighlight(label, value, level = "green") {
@@ -2406,9 +3020,27 @@ async function readZipJson(zipPath, innerPath) {
   return JSON.parse(text);
 }
 
-async function readCaptureLines(zipPath, innerPath, onRecord) {
-  const buffer = readZipEntryBuffer(zipPath, innerPath);
-  const input = Readable.from(buffer);
+async function readOptionalZipJson(zipPath, innerPath) {
+  try {
+    return await readZipJson(zipPath, innerPath);
+  } catch (error) {
+    if (error?.code === "ZIP_ENTRY_NOT_FOUND") return null;
+    throw error;
+  }
+}
+
+async function readCaptureLines(
+  zipPath,
+  innerPath,
+  onRecord,
+  onProgress = null,
+) {
+  const { stream: input } = await openZipEntryStream(zipPath, innerPath);
+  let processedBytes = 0;
+  input.on("data", (chunk) => {
+    processedBytes += chunk.length;
+    if (typeof onProgress === "function") onProgress(processedBytes);
+  });
   const stream = innerPath.endsWith(".gz") ? input.pipe(zlib.createGunzip()) : input;
   const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
   for await (const line of lines) {
@@ -2417,8 +3049,17 @@ async function readCaptureLines(zipPath, innerPath, onRecord) {
   }
 }
 
-async function readRecordingLines(recordingPath, onRecord) {
+async function readRecordingLines(
+  recordingPath,
+  onRecord,
+  onProgress = null,
+) {
   const input = fs.createReadStream(recordingPath);
+  let processedBytes = 0;
+  input.on("data", (chunk) => {
+    processedBytes += chunk.length;
+    if (typeof onProgress === "function") onProgress(processedBytes);
+  });
   const stream = recordingPath.endsWith(".gz") ? input.pipe(zlib.createGunzip()) : input;
   const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
   for await (const line of lines) {
@@ -2435,17 +3076,106 @@ async function sendGpx(res, analysis, fallbackFile) {
   res.send(gpx);
 }
 
-function readZipEntryText(zipPath, innerPath) {
-  return readZipEntryBuffer(zipPath, innerPath).toString("utf8");
+async function readZipEntryText(zipPath, innerPath) {
+  return (await readZipEntryBuffer(zipPath, innerPath)).toString("utf8");
 }
 
-function readZipEntryBuffer(zipPath, innerPath) {
-  const zip = new AdmZip(zipPath);
-  const entry = zip.getEntry(innerPath);
-  if (!entry || entry.isDirectory) {
-    throw new Error(`zip entry not found: ${innerPath}`);
+async function readZipEntryBuffer(
+  zipPath,
+  innerPath,
+  maximumBytes = MAX_ZIP_TEXT_ENTRY_BYTES,
+) {
+  const { stream, entry } = await openZipEntryStream(zipPath, innerPath);
+  if (Number(entry.uncompressedSize) > maximumBytes) {
+    stream.destroy();
+    throw new Error(`zip entry is too large to buffer safely: ${innerPath}`);
   }
-  return entry.getData();
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunk of stream) {
+    bytes += chunk.length;
+    if (bytes > maximumBytes) {
+      stream.destroy();
+      throw new Error(`zip entry is too large to buffer safely: ${innerPath}`);
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+function openZipEntryStream(zipPath, innerPath) {
+  return new Promise((resolve, reject) => {
+    yauzl.open(
+      zipPath,
+      { lazyEntries: true, autoClose: false },
+      (openError, zip) => {
+        if (openError || !zip) {
+          reject(openError || new Error("Unable to open voyage ZIP"));
+          return;
+        }
+        let settled = false;
+        const fail = (error) => {
+          if (settled) return;
+          settled = true;
+          zip.close();
+          reject(error);
+        };
+        zip.once("error", fail);
+        zip.once("end", () => {
+          const error = new Error(`zip entry not found: ${innerPath}`);
+          error.code = "ZIP_ENTRY_NOT_FOUND";
+          fail(error);
+        });
+        zip.on("entry", (entry) => {
+          if (entry.fileName !== innerPath || /\/$/.test(entry.fileName)) {
+            zip.readEntry();
+            return;
+          }
+          zip.openReadStream(entry, (streamError, stream) => {
+            if (streamError || !stream) {
+              fail(streamError || new Error(`Unable to read ${innerPath}`));
+              return;
+            }
+            settled = true;
+            const closeZip = () => zip.close();
+            stream.once("end", closeZip);
+            stream.once("close", closeZip);
+            stream.once("error", closeZip);
+            resolve({ stream, entry });
+          });
+        });
+        zip.readEntry();
+      },
+    );
+  });
+}
+
+function listZipEntries(zipPath) {
+  return new Promise((resolve, reject) => {
+    yauzl.open(zipPath, { lazyEntries: true }, (openError, zip) => {
+      if (openError || !zip) {
+        reject(openError || new Error("Unable to open voyage ZIP"));
+        return;
+      }
+      const entries = [];
+      zip.once("error", reject);
+      zip.once("end", () => resolve(entries));
+      zip.on("entry", (entry) => {
+        entries.push({
+          fileName: entry.fileName,
+          compressedSize: Number(entry.compressedSize),
+          uncompressedSize: Number(entry.uncompressedSize),
+        });
+        zip.readEntry();
+      });
+      zip.readEntry();
+    });
+  });
+}
+
+async function zipEntryMetadata(zipPath, innerPath) {
+  const entries = await listZipEntries(zipPath);
+  return entries.find((entry) => entry.fileName === innerPath) || null;
 }
 
 async function assertReadableFile(filePath) {

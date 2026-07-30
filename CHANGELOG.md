@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.2
+
+- Stream embedded voyage capture segments with lazy ZIP entry reads and
+  line-by-line gzip decompression, avoiding whole-segment memory buffering.
+- Download voyage bundles through the browser's native streaming path instead
+  of constructing a second full bundle blob in browser memory.
+- Replace estimated plot/review timing with measured server-side analysis
+  progress, including scan passes, segment counts, and processed bytes.
+- Verify durable recomputed-replay completion checkpoints, coverage,
+  result-segment manifests, and embedded segment byte sizes independently from
+  live-input isolation.
+- Review captured Traffic target-position projection evidence, including AIS
+  measurement age, announcement lead, projection duration, stale targets, and
+  withheld calculations.
+- Invalidate older analysis caches so existing bundles receive the expanded
+  completion and Traffic review.
+
 ## 0.6.1
 
 - Preserve integrity assurance/comparison availability, GPS-dependence,

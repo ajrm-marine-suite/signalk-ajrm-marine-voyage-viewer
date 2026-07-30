@@ -22,6 +22,24 @@ prepared coverage, and live-input isolation result. Incomplete coverage or
 detected live-sensor contamination is shown as a red software finding rather
 than being reviewed as an ordinary clean voyage.
 
+Current builds also verify Capture's durable recomputation-completion
+checkpoint, replay coverage, result-segment manifest, and the presence and
+byte size of every embedded result segment. Packaging/completion verification
+is reported separately from live-input isolation, so a complete bundle still
+preserves any historical contamination finding rather than conflating the two.
+
+Large voyage ZIPs are analysed as streams on the Signal K server. Embedded
+`.jsonl.gz` segments are read and decompressed line by line instead of loading
+whole ZIP entries into memory, and the progress bar reports measured bytes and
+analysis phases. Voyage downloads use the browser's native download path so
+the bundle streams directly to disk instead of being assembled as a browser
+memory blob.
+
+When captured Traffic target projections are available, Voyage Review
+summarises AIS observation age, forward-projection duration, configured
+announcement lead, stale targets, and positions deliberately withheld from
+CPA/TCPA calculation.
+
 Version `0.5.3` doubles the main plotted voyage track line thickness for easier
 viewing.
 
@@ -76,9 +94,9 @@ webapp opening the chart resource API first.
 ## Plot progress
 
 Recording analysis runs on the Signal K server. The webapp shows a staged
-horizontal progress bar while it opens the voyage, clip, or log, scans the
-capture data, finds the track, computes the summary, and renders the chart
-overlay or GPX download.
+horizontal progress bar driven by actual server-side byte and phase progress
+while it opens the voyage, clip, or log, scans the capture data, finds the
+track, computes the summary, and renders the chart overlay or GPX download.
 
 ## Plot cache
 
