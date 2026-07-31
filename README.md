@@ -1,9 +1,9 @@
 # AJRM Marine Voyage Viewer
 
-Signal K webapp for plotting AJRM Marine Capture voyage bundles, Signal K
-Logger clips, and AJRM Marine Logger logs.
+Signal K webapp for plotting AJRM Marine Capture voyage bundles and legacy
+Signal K Logger clips and logs.
 
-The app lists AJRM Marine Capture voyage bundles plus AJRM Marine Logger clips and
+The app lists AJRM Marine Capture voyage bundles plus legacy Logger clips and
 logs. Any selected voyage, clip, or log can be plotted on a Leaflet chart,
 exported as GPX 1.1, downloaded, and summarised.
 
@@ -63,15 +63,15 @@ Version `0.1.16` refreshes Auto Charts using the same direct Signal K resource
 fallback as DR Plotter and uses voyage duration to show steadier progress while
 long captures are scanned.
 
-Version `0.1.15` plots AJRM Marine Capture reference-mode voyage bundles by
-reading the referenced AJRM Marine Logger files on the server when they are not
-copied into the zip.
+Version `0.1.15` added support for old reference-mode voyage bundles by reading
+their referenced AJRM Marine Logger files when those files still exist on the
+server.
 
-The recording browser uses the same tab model as AJRM Marine Logger:
+The recording browser keeps the historical three-tab model:
 
 - `Voyages`: zipped AJRM Marine Capture voyage bundles
-- `Clips`: extracted `.jsonl` / `.jsonl.gz` clips
-- `Logs`: captured `.jsonl` / `.jsonl.gz` logger files
+- `Clips`: legacy extracted `.jsonl` / `.jsonl.gz` clips
+- `Logs`: legacy `.jsonl` / `.jsonl.gz` Logger files
 
 Select one row, then use the shared Plot, Export GPX, or Download buttons.
 

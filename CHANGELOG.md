@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.3
+
+- Recommend AJRM Marine Capture directly now that Capture owns recording and
+  replay.
+
 ## 0.6.2
 
 - Stream embedded voyage capture segments with lazy ZIP entry reads and
