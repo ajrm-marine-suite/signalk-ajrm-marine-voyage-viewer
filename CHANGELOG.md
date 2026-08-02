@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.5
 
 - Calculate pilot helm bias only from TP32 position samples captured while the
   autopilot explicitly reports `auto`, `heading`, `wind`, or `route`; count and
