@@ -124,6 +124,11 @@ elsewhere.
 - Maximum SOG
 - Maximum apparent and true wind speed when captured
 - Minimum depth below transducer when captured
+- Whole-voyage rudder median (signed port/starboard bias), median absolute angle,
+  and sample count when captured. This is observational trim evidence, not a
+  diagnosis: manoeuvres, sea state, steering system bias, and points of sail
+  can all affect it.
+- Average, minimum, and maximum sea-water temperature when captured
 - Track point count and snapshot count
 - GPS Integrity summary when captured: final trust state, evaluations, GPS
   outages, rejected fixes, position jumps, weak-signal events, GPS/DR mismatch

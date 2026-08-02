@@ -22,7 +22,7 @@ const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v1";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const REVIEW_SCHEMA_VERSION = 2;
-const REVIEW_ENGINE_VERSION = 11;
+const REVIEW_ENGINE_VERSION = 12;
 const MAX_ZIP_TEXT_ENTRY_BYTES = 64 * 1024 * 1024;
 const RECOMPUTED_COMPLETION_PATH = "system/recomputed-replay-completion.json";
 const TRAFFIC_TARGETS_PATH = "plugins.ajrmMarineTraffic.targets";
@@ -888,6 +888,8 @@ async function scanCaptureSources(
     trafficNotificationSamples: [],
     trafficProjectionMetrics: emptyTrafficProjectionMetrics(),
     speedSamples: [],
+    rudderSamples: [],
+    waterTemperatureSamples: [],
     maxSogKnots: null,
     maxApparentWindKnots: null,
     maxTrueWindKnots: null,
@@ -973,6 +975,8 @@ function emptyScanResult() {
     trafficNotificationSamples: [],
     trafficProjectionMetrics: emptyTrafficProjectionMetrics(),
     speedSamples: [],
+    rudderSamples: [],
+    waterTemperatureSamples: [],
     maxSogKnots: null,
     maxApparentWindKnots: null,
     maxTrueWindKnots: null,
@@ -1040,6 +1044,18 @@ function scanRecord(record, ownContext, result, window) {
         if (Number.isFinite(meters)) {
           result.minDepthMeters =
             result.minDepthMeters == null ? meters : Math.min(result.minDepthMeters, meters);
+        }
+      } else if (ownContext && context === ownContext && valuePath === "steering.rudderAngle") {
+        if (!isInsideWindow(timestamp, window)) continue;
+        const radians = numberOrNull(value);
+        if (radians !== null) {
+          result.rudderSamples.push({ ts: timestamp, degrees: signedDegreesFromRadians(radians) });
+        }
+      } else if (ownContext && context === ownContext && valuePath === "environment.water.temperature") {
+        if (!isInsideWindow(timestamp, window)) continue;
+        const kelvin = numberOrNull(value);
+        if (kelvin !== null) {
+          result.waterTemperatureSamples.push({ ts: timestamp, celsius: kelvin - 273.15 });
         }
       }
     }
@@ -1981,6 +1997,8 @@ function buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity
     maxApparentWindKnots: ownPass.maxApparentWindKnots,
     maxTrueWindKnots: ownPass.maxTrueWindKnots,
     minDepthMeters: ownPass.minDepthMeters,
+    rudder: summarizeRudder(ownPass.rudderSamples),
+    waterTemperature: summarizeWaterTemperature(ownPass.waterTemperatureSamples),
     trackPoints: track.length,
     plottedTrackPoints: track.length,
     ownContext,
@@ -1991,6 +2009,40 @@ function buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity
     snapshotCount: Number(index.snapshotCount) || 0,
     gpsIntegrity: gpsIntegrity?.summary || { available: false },
     traffic: traffic || { available: false },
+  };
+}
+
+function summarizeRudder(samples = []) {
+  const angles = samples.map((sample) => sample.degrees).filter(Number.isFinite);
+  if (angles.length === 0) return { available: false, sampleCount: 0 };
+  return {
+    available: true,
+    sampleCount: angles.length,
+    medianAngleDegrees: median(angles),
+    meanAngleDegrees: average(angles),
+    medianAbsoluteAngleDegrees: median(angles.map(Math.abs)),
+    maximumAbsoluteAngleDegrees: angles.reduce(
+      (maximum, angle) => Math.max(maximum, Math.abs(angle)),
+      0,
+    ),
+  };
+}
+
+function summarizeWaterTemperature(samples = []) {
+  const temperatures = samples.map((sample) => sample.celsius).filter(Number.isFinite);
+  if (temperatures.length === 0) return { available: false, sampleCount: 0 };
+  return {
+    available: true,
+    sampleCount: temperatures.length,
+    averageCelsius: average(temperatures),
+    minimumCelsius: temperatures.reduce(
+      (minimum, temperature) => Math.min(minimum, temperature),
+      Infinity,
+    ),
+    maximumCelsius: temperatures.reduce(
+      (maximum, temperature) => Math.max(maximum, temperature),
+      -Infinity,
+    ),
   };
 }
 
@@ -3276,6 +3328,20 @@ function average(values) {
   const finite = values.filter(Number.isFinite);
   if (finite.length === 0) return null;
   return finite.reduce((sum, value) => sum + value, 0) / finite.length;
+}
+
+function median(values) {
+  const finite = values.filter(Number.isFinite).sort((left, right) => left - right);
+  if (finite.length === 0) return null;
+  const middle = Math.floor(finite.length / 2);
+  return finite.length % 2 === 0
+    ? (finite[middle - 1] + finite[middle]) / 2
+    : finite[middle];
+}
+
+function signedDegreesFromRadians(value) {
+  const degrees = (value * 180) / Math.PI;
+  return ((degrees + 180) % 360 + 360) % 360 - 180;
 }
 
 function touchSampleTimes(result, timestamp) {

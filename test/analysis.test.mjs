@@ -1051,6 +1051,34 @@ test("analyses raw AJRM Marine Logger jsonl recordings", async () => {
   assert.match(analysis.gpxUrl, /\/files\/logs\/capture-20260622T120000Z\.jsonl\/track\.gpx$/);
 });
 
+test("summarises rudder bias and sea-water temperature from own-vessel samples", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-instruments-"));
+  const file = path.join(dir, "capture-20260802T120000Z.jsonl");
+  const rudderDegrees = [-12, -8, -4, 30];
+  const waterCelsius = [10, 12, 14, 12];
+  const records = rudderDegrees.map((rudderAngle, index) => captureRecord(
+    `2026-08-02T12:0${index}:00.000Z`,
+    56 + index * 0.001,
+    -5,
+    3,
+    { rudderAngle, waterCelsius: waterCelsius[index] },
+  ));
+  await fs.writeFile(file, records.map((record) => JSON.stringify(record)).join("\n"));
+
+  const analysis = await _private.analyseRecording(file, { kind: "logs", maxTrackPoints: 100 });
+
+  assert.equal(analysis.summary.rudder.available, true);
+  assert.equal(analysis.summary.rudder.sampleCount, 4);
+  assert.ok(Math.abs(analysis.summary.rudder.medianAngleDegrees - -6) < 1e-9);
+  assert.ok(Math.abs(analysis.summary.rudder.meanAngleDegrees - 1.5) < 1e-9);
+  assert.ok(Math.abs(analysis.summary.rudder.medianAbsoluteAngleDegrees - 10) < 1e-9);
+  assert.equal(analysis.summary.waterTemperature.available, true);
+  assert.equal(analysis.summary.waterTemperature.sampleCount, 4);
+  assert.ok(Math.abs(analysis.summary.waterTemperature.averageCelsius - 12) < 1e-9);
+  assert.ok(Math.abs(analysis.summary.waterTemperature.minimumCelsius - 10) < 1e-9);
+  assert.ok(Math.abs(analysis.summary.waterTemperature.maximumCelsius - 14) < 1e-9);
+});
+
 test("caches plot analysis beside the source recording", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-cache-"));
   const fileName = "capture-20260622T120000Z.jsonl";
@@ -1130,12 +1158,16 @@ test("web app exposes DR plot-fix overlay controls", async () => {
   assert.match(app, /popupRow\("Navigation reference"/);
   assert.match(app, /\["DR evidence", drEvidenceSummary/);
   assert.match(app, /\["Integrity comparison", integrityAssuranceSummary/);
+  assert.match(app, /\["Rudder bias", formatRudderSummary/);
+  assert.match(app, /\["Water temperature", formatWaterTemperatureSummary/);
+  assert.match(app, /function formatRudderSummary/);
+  assert.match(app, /function formatWaterTemperatureSummary/);
   assert.match(app, /if \(value === false\) return "GPS-independent"/);
   assert.match(app, /if \(fix\.plotType === "gps-return"\) return "GPS fix"/);
   assert.match(css, /\.plot-fix-symbol-marker\.estimated-position \.plot-fix-symbol/);
 });
 
-function captureRecord(timestamp, latitude, longitude, sogKnots) {
+function captureRecord(timestamp, latitude, longitude, sogKnots, instruments = {}) {
   return {
     capturedAt: timestamp,
     delta: {
@@ -1152,6 +1184,14 @@ function captureRecord(timestamp, latitude, longitude, sogKnots) {
               path: "navigation.speedOverGround",
               value: sogKnots / 1.9438444924406046,
             },
+            ...(Number.isFinite(instruments.rudderAngle) ? [{
+              path: "steering.rudderAngle",
+              value: instruments.rudderAngle * Math.PI / 180,
+            }] : []),
+            ...(Number.isFinite(instruments.waterCelsius) ? [{
+              path: "environment.water.temperature",
+              value: instruments.waterCelsius + 273.15,
+            }] : []),
           ],
         },
       ],

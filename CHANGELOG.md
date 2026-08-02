@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.4
+
+- Summarise captured rudder-angle bias and typical absolute helm angle, and
+  average/minimum/maximum sea-water temperature, in the voyage summary.
+- Invalidate cached voyage analyses so existing recordings gain the new
+  summaries when the data paths were captured.
+
 ## 0.6.3
 
 - Recommend AJRM Marine Capture directly now that Capture owns recording and
