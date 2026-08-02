@@ -124,10 +124,13 @@ elsewhere.
 - Maximum SOG
 - Maximum apparent and true wind speed when captured
 - Minimum depth below transducer when captured
-- Whole-voyage rudder median (signed port/starboard bias), median absolute angle,
-  and sample count when captured. This is observational trim evidence, not a
-  diagnosis: manoeuvres, sea state, steering system bias, and points of sail
-  can all affect it.
+- Pilot helm median (signed port/starboard bias), median absolute angle, and
+  sample count from periods when the autopilot explicitly reports `auto`,
+  `heading`, `wind`, or `route`. Standby and unknown-state TP32 positions are
+  excluded and counted because the pilot may publish placeholder values then.
+  This is a helm-position proxy and observational trim evidence, not a
+  calibrated physical rudder measurement or diagnosis: manoeuvres, sea state,
+  steering system bias, and points of sail can all affect it.
 - Average, minimum, and maximum sea-water temperature when captured
 - Track point count and snapshot count
 - GPS Integrity summary when captured: final trust state, evaluations, GPS

@@ -943,7 +943,7 @@ function renderSummary(analysis) {
     ["Max AWS", formatNumber(summary.maxApparentWindKnots, 1, " kn")],
     ["Max TWS", formatNumber(summary.maxTrueWindKnots, 1, " kn")],
     ["Min depth", formatNumber(summary.minDepthMeters, 1, " m")],
-    ["Rudder bias", formatRudderSummary(summary.rudder)],
+    ["Pilot helm bias", formatRudderSummary(summary.rudder)],
     ["Water temperature", formatWaterTemperatureSummary(summary.waterTemperature)],
     ["Points", `${summary.trackPoints || 0} (${analysis.track?.length || 0} plotted)`],
     ["DR track", drTrackSummary(analysis.drTracks)],
@@ -1326,7 +1326,11 @@ function formatNumber(value, digits, suffix) {
 }
 
 function formatRudderSummary(summary) {
-  if (summary?.available !== true) return "—";
+  const excluded = Number(summary?.excludedSampleCount) || 0;
+  const excludedText = excluded > 0 ? ` · ${excluded} standby/unavailable excluded` : "";
+  if (summary?.available !== true) {
+    return excluded > 0 ? `No engaged-pilot samples · ${excluded} standby/unavailable excluded` : "—";
+  }
   const median = finiteNumberOrNull(summary.medianAngleDegrees);
   const typical = finiteNumberOrNull(summary.medianAbsoluteAngleDegrees);
   const medianText = median === null
@@ -1335,7 +1339,7 @@ function formatRudderSummary(summary) {
       ? "median amidships"
       : `median ${Math.abs(median).toFixed(1)}° ${median < 0 ? "port" : "starboard"}`;
   const typicalText = typical === null ? "" : ` · typical deflection ${typical.toFixed(1)}°`;
-  return `${medianText}${typicalText} · ${summary.sampleCount || 0} samples`;
+  return `${medianText}${typicalText} · ${summary.sampleCount || 0} engaged samples${excludedText}`;
 }
 
 function formatWaterTemperatureSummary(summary) {

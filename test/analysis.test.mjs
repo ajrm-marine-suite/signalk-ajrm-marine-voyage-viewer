@@ -1051,24 +1051,74 @@ test("analyses raw AJRM Marine Logger jsonl recordings", async () => {
   assert.match(analysis.gpxUrl, /\/files\/logs\/capture-20260622T120000Z\.jsonl\/track\.gpx$/);
 });
 
-test("summarises rudder bias and sea-water temperature from own-vessel samples", async () => {
+test("analyses explicitly declared completed recomputed output", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-recomputed-"));
+  const bundleDir = path.join(dir, "bundle");
+  await fs.mkdir(path.join(bundleDir, "recomputed"), { recursive: true });
+  const records = [
+    captureRecord("2026-08-02T12:00:00.000Z", 56, -5, 2, {
+      autopilotState: "standby",
+      rudderAngle: -10,
+    }),
+    captureRecord("2026-08-02T12:01:00.000Z", 56.001, -5, 2, {
+      autopilotState: "route",
+      rudderAngle: 6,
+    }),
+  ];
+  await fs.writeFile(
+    path.join(bundleDir, "recomputed", "output.jsonl"),
+    records.map((record) => JSON.stringify(record)).join("\n"),
+  );
+  await fs.writeFile(path.join(bundleDir, "index.json"), JSON.stringify({
+    id: "voyage-recomputed-output",
+    startedAt: "2026-08-02T12:00:00.000Z",
+    stoppedAt: "2026-08-02T12:01:00.000Z",
+    captureFiles: [],
+    captureReferences: [],
+    recomputedOutput: {
+      contract: "ajrm-marine-recomputed-output-v1",
+      fileName: "recomputed/output.jsonl",
+      complete: true,
+    },
+  }));
+  const zipPath = path.join(dir, "voyage-recomputed-output.zip");
+  await writeZip(zipPath, bundleDir, ["index.json", "recomputed/output.jsonl"]);
+
+  const analysis = await _private.analyseVoyage(zipPath, { maxTrackPoints: 100 });
+
+  assert.equal(analysis.summary.trackPoints, 2);
+  assert.equal(analysis.summary.rudder.sampleCount, 1);
+  assert.equal(analysis.summary.rudder.excludedSampleCount, 1);
+  assert.equal(analysis.summary.rudder.medianAngleDegrees, 6);
+});
+
+test("summarises engaged pilot helm bias and excludes standby TP32 positions", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-instruments-"));
   const file = path.join(dir, "capture-20260802T120000Z.jsonl");
   const rudderDegrees = [-12, -8, -4, 30];
   const waterCelsius = [10, 12, 14, 12];
-  const records = rudderDegrees.map((rudderAngle, index) => captureRecord(
+  const records = [captureRecord(
+    "2026-08-02T11:59:00.000Z",
+    55.999,
+    -5,
+    3,
+    { rudderAngle: 10, autopilotState: "standby" },
+  ), ...rudderDegrees.map((rudderAngle, index) => captureRecord(
     `2026-08-02T12:0${index}:00.000Z`,
     56 + index * 0.001,
     -5,
     3,
-    { rudderAngle, waterCelsius: waterCelsius[index] },
-  ));
+    { rudderAngle, waterCelsius: waterCelsius[index], autopilotState: index === 3 ? "wind" : "heading" },
+  ))];
   await fs.writeFile(file, records.map((record) => JSON.stringify(record)).join("\n"));
 
   const analysis = await _private.analyseRecording(file, { kind: "logs", maxTrackPoints: 100 });
 
   assert.equal(analysis.summary.rudder.available, true);
   assert.equal(analysis.summary.rudder.sampleCount, 4);
+  assert.equal(analysis.summary.rudder.observedSampleCount, 5);
+  assert.equal(analysis.summary.rudder.excludedSampleCount, 1);
+  assert.equal(analysis.summary.rudder.scope, "engaged-autopilot-only");
   assert.ok(Math.abs(analysis.summary.rudder.medianAngleDegrees - -6) < 1e-9);
   assert.ok(Math.abs(analysis.summary.rudder.meanAngleDegrees - 1.5) < 1e-9);
   assert.ok(Math.abs(analysis.summary.rudder.medianAbsoluteAngleDegrees - 10) < 1e-9);
@@ -1158,7 +1208,7 @@ test("web app exposes DR plot-fix overlay controls", async () => {
   assert.match(app, /popupRow\("Navigation reference"/);
   assert.match(app, /\["DR evidence", drEvidenceSummary/);
   assert.match(app, /\["Integrity comparison", integrityAssuranceSummary/);
-  assert.match(app, /\["Rudder bias", formatRudderSummary/);
+  assert.match(app, /\["Pilot helm bias", formatRudderSummary/);
   assert.match(app, /\["Water temperature", formatWaterTemperatureSummary/);
   assert.match(app, /function formatRudderSummary/);
   assert.match(app, /function formatWaterTemperatureSummary/);
@@ -1176,6 +1226,10 @@ function captureRecord(timestamp, latitude, longitude, sogKnots, instruments = {
         {
           timestamp,
           values: [
+            ...(instruments.autopilotState ? [{
+              path: "steering.autopilot.state",
+              value: instruments.autopilotState,
+            }] : []),
             {
               path: "navigation.position",
               value: { latitude, longitude },

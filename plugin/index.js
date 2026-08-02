@@ -22,7 +22,8 @@ const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v1";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const REVIEW_SCHEMA_VERSION = 2;
-const REVIEW_ENGINE_VERSION = 12;
+const REVIEW_ENGINE_VERSION = 13;
+const ENGAGED_AUTOPILOT_STATES = new Set(["auto", "heading", "wind", "route"]);
 const MAX_ZIP_TEXT_ENTRY_BYTES = 64 * 1024 * 1024;
 const RECOMPUTED_COMPLETION_PATH = "system/recomputed-replay-completion.json";
 const TRAFFIC_TARGETS_PATH = "plugins.ajrmMarineTraffic.targets";
@@ -600,6 +601,7 @@ async function analyseVoyage(
     captureFiles,
     captureReferences,
     currentOptions,
+    index,
   );
   if (captureSources.length === 0) throw new Error(voyageCaptureSourceError(captureReferences));
 
@@ -788,7 +790,13 @@ async function analyseRecording(
   };
 }
 
-async function resolveVoyageCaptureSources(voyagePath, captureFiles, captureReferences, currentOptions) {
+async function resolveVoyageCaptureSources(
+  voyagePath,
+  captureFiles,
+  captureReferences,
+  currentOptions,
+  index = {},
+) {
   if (captureFiles.length) {
     const sources = [];
     for (const captureFile of captureFiles) {
@@ -812,6 +820,25 @@ async function resolveVoyageCaptureSources(voyagePath, captureFiles, captureRefe
     if (sourcePath) {
       const stat = await fs.promises.stat(sourcePath);
       sources.push({ kind: "file", path: sourcePath, bytes: stat.size });
+    }
+  }
+  if (sources.length === 0) {
+    const recomputedOutput = index?.recomputedOutput || index?.recomputedReplay?.result?.output;
+    const innerPath = String(recomputedOutput?.fileName || "");
+    if (
+      recomputedOutput?.contract === "ajrm-marine-recomputed-output-v1" &&
+      recomputedOutput?.complete === true &&
+      innerPath
+    ) {
+      const entry = await zipEntryMetadata(voyagePath, innerPath);
+      if (entry) {
+        sources.push({
+          kind: "zip",
+          voyagePath,
+          innerPath,
+          bytes: entry.uncompressedSize,
+        });
+      }
     }
   }
   return sources;
@@ -889,6 +916,8 @@ async function scanCaptureSources(
     trafficProjectionMetrics: emptyTrafficProjectionMetrics(),
     speedSamples: [],
     rudderSamples: [],
+    rudderSampleCounts: { observed: 0, excluded: 0 },
+    autopilotState: null,
     waterTemperatureSamples: [],
     maxSogKnots: null,
     maxApparentWindKnots: null,
@@ -976,6 +1005,8 @@ function emptyScanResult() {
     trafficProjectionMetrics: emptyTrafficProjectionMetrics(),
     speedSamples: [],
     rudderSamples: [],
+    rudderSampleCounts: { observed: 0, excluded: 0 },
+    autopilotState: null,
     waterTemperatureSamples: [],
     maxSogKnots: null,
     maxApparentWindKnots: null,
@@ -991,6 +1022,12 @@ function scanRecord(record, ownContext, result, window) {
   const context = String(delta.context || "");
   for (const update of delta.updates || []) {
     const timestamp = update.timestamp || record.capturedAt;
+    if (ownContext && context === ownContext) {
+      const stateItem = (update.values || []).find(
+        (item) => String(item?.path || "") === "steering.autopilot.state",
+      );
+      if (stateItem) result.autopilotState = normalizeAutopilotState(stateItem.value);
+    }
     for (const item of update.values || []) {
       const value = item.value;
       const valuePath = String(item.path || "");
@@ -1049,7 +1086,16 @@ function scanRecord(record, ownContext, result, window) {
         if (!isInsideWindow(timestamp, window)) continue;
         const radians = numberOrNull(value);
         if (radians !== null) {
-          result.rudderSamples.push({ ts: timestamp, degrees: signedDegreesFromRadians(radians) });
+          result.rudderSampleCounts.observed += 1;
+          if (isAutopilotEngagedState(result.autopilotState)) {
+            result.rudderSamples.push({
+              ts: timestamp,
+              degrees: signedDegreesFromRadians(radians),
+              autopilotState: result.autopilotState,
+            });
+          } else {
+            result.rudderSampleCounts.excluded += 1;
+          }
         }
       } else if (ownContext && context === ownContext && valuePath === "environment.water.temperature") {
         if (!isInsideWindow(timestamp, window)) continue;
@@ -1997,7 +2043,7 @@ function buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity
     maxApparentWindKnots: ownPass.maxApparentWindKnots,
     maxTrueWindKnots: ownPass.maxTrueWindKnots,
     minDepthMeters: ownPass.minDepthMeters,
-    rudder: summarizeRudder(ownPass.rudderSamples),
+    rudder: summarizeRudder(ownPass.rudderSamples, ownPass.rudderSampleCounts),
     waterTemperature: summarizeWaterTemperature(ownPass.waterTemperatureSamples),
     trackPoints: track.length,
     plottedTrackPoints: track.length,
@@ -2012,12 +2058,21 @@ function buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity
   };
 }
 
-function summarizeRudder(samples = []) {
+function summarizeRudder(samples = [], counts = {}) {
   const angles = samples.map((sample) => sample.degrees).filter(Number.isFinite);
-  if (angles.length === 0) return { available: false, sampleCount: 0 };
+  const observedSampleCount = Number(counts.observed) || angles.length;
+  const excludedSampleCount = Number(counts.excluded) || 0;
+  const common = {
+    sampleCount: angles.length,
+    observedSampleCount,
+    excludedSampleCount,
+    scope: "engaged-autopilot-only",
+    measurementKind: "pilot-helm-position-proxy",
+  };
+  if (angles.length === 0) return { available: false, ...common };
   return {
     available: true,
-    sampleCount: angles.length,
+    ...common,
     medianAngleDegrees: median(angles),
     meanAngleDegrees: average(angles),
     medianAbsoluteAngleDegrees: median(angles.map(Math.abs)),
@@ -2026,6 +2081,15 @@ function summarizeRudder(samples = []) {
       0,
     ),
   };
+}
+
+function normalizeAutopilotState(value) {
+  const unwrapped = unwrapValue(value);
+  return unwrapped == null ? "" : String(unwrapped).trim().toLowerCase();
+}
+
+function isAutopilotEngagedState(value) {
+  return ENGAGED_AUTOPILOT_STATES.has(normalizeAutopilotState(value));
 }
 
 function summarizeWaterTemperature(samples = []) {

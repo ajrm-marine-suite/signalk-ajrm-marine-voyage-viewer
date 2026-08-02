@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Calculate pilot helm bias only from TP32 position samples captured while the
+  autopilot explicitly reports `auto`, `heading`, `wind`, or `route`; count and
+  disclose excluded standby/unknown samples instead of treating the TP32's
+  placeholder positions as physical rudder movement.
+- Analyse a completed, explicitly contracted `recomputed/output.jsonl` when a
+  replay bundle intentionally has no `capture/*` files or external Logger
+  references.
+
 ## 0.6.4
 
 - Summarise captured rudder-angle bias and typical absolute helm angle, and
