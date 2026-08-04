@@ -22,7 +22,7 @@ test("voyage downloads defer to Capture portable bundle builder when available",
 test("download button lets the browser stream large bundles directly to disk", async () => {
   const source = await fs.readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(source, /function downloadSelectedFile\(event\)/);
-  assert.match(source, /elements\.downloadSelected\.href = downloadUrl\(activeKind, fileName\)/);
+  assert.match(source, /elements\.downloadSelected\.href = downloadUrl\(VOYAGE_KIND, fileName\)/);
   assert.match(source, /browser will stream it directly to disk/);
   const bundleDownload = source.slice(
     source.indexOf("function downloadSelectedFile"),
@@ -49,10 +49,11 @@ test("publishes suite-facing status and review capability", async () => {
   assert.match(source, /publishStatus\(\)/);
   assert.match(source, /path: STATUS_PATH, value: statusPayload\(\)/);
   assert.match(source, /voyageDirectory: options\.voyageDirectory/);
-  assert.match(source, /logDirectory: options\.logDirectory/);
-  assert.match(source, /clipDirectory: options\.clipDirectory/);
+  assert.match(source, /voyageOnly: true/);
+  assert.doesNotMatch(source, /title: "AJRM Marine Logger logs directory"/);
+  assert.doesNotMatch(source, /title: "AJRM Marine Logger clips directory"/);
   assert.match(source, /review:\s*{\s*supported: true,\s*schemaVersion: 2/s);
-  assert.match(source, /capabilities:\s*{\s*plot: true,\s*download: true,\s*review: true/s);
+  assert.match(source, /capabilities:\s*{\s*voyageOnly: true,\s*plot: true,\s*download: true,\s*review: true/s);
   assert.match(source, /streamingDownload: true/);
   assert.match(source, /streamingAnalysis: true/);
   assert.match(source, /analysisProgress: true/);
@@ -169,6 +170,50 @@ test("voyage list includes comment from bundle index", async () => {
   assert.equal(voyages[0].recomputedReplay.parentVoyage, "voyage-parent.zip");
   assert.equal(voyages[0].recomputedReplay.coverage.complete, true);
   assert.equal(voyages[0].recomputedReplay.liveInputIsolation.valid, true);
+});
+
+test("analyses current canonical-input voyage bundles without legacy capture files", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-canonical-"));
+  const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-canonical-bundle-"));
+  const inputRelativePath = path.join("input", "yden-input.jsonl");
+  await fs.mkdir(path.join(bundleDir, "input"), { recursive: true });
+  const records = [
+    captureRecord("2026-08-04T05:29:39.837Z", 56.0, -5.0, 2),
+    captureRecord("2026-08-04T05:39:39.837Z", 56.00833, -5.0, 3),
+  ].map((record, index) => ({
+    contract: "ajrm-marine-canonical-input-v1",
+    schemaVersion: 1,
+    elapsedMs: index * 600_000,
+    ...record,
+  }));
+  await fs.writeFile(
+    path.join(bundleDir, inputRelativePath),
+    records.map((record) => JSON.stringify(record)).join("\n"),
+  );
+  await fs.writeFile(
+    path.join(bundleDir, "index.json"),
+    JSON.stringify({
+      id: "voyage-20260804T052939Z",
+      version: "0.7.11",
+      startedAt: "2026-08-04T05:29:39.837Z",
+      stoppedAt: "2026-08-04T05:39:39.837Z",
+      canonicalInput: {
+        contract: "ajrm-marine-canonical-input-v1",
+        schemaVersion: 1,
+        fileName: "input/yden-input.jsonl",
+        records: records.length,
+        complete: true,
+      },
+    }),
+  );
+  const zipPath = path.join(dir, "voyage-20260804T052939Z.zip");
+  await writeZip(zipPath, bundleDir, ["index.json", inputRelativePath]);
+
+  const analysis = await _private.analyseVoyage(zipPath, { maxTrackPoints: 100 });
+
+  assert.equal(analysis.sourceKind, "voyages");
+  assert.equal(analysis.summary.trackPoints, 2);
+  assert.ok(analysis.summary.distanceNm > 0.49 && analysis.summary.distanceNm < 0.51);
 });
 
 test("analyses reference-mode voyage bundles from AJRM Marine Logger files", async () => {
@@ -1141,7 +1186,6 @@ test("caches plot analysis beside the source recording", async () => {
   const options = {
     voyageDirectory: dir,
     logDirectory: dir,
-    clipDirectory: dir,
   };
   const first = await _private.analyseFileSource("logs", fileName, options, 100);
   assert.equal(first.cache, undefined);
@@ -1165,7 +1209,6 @@ test("accepts legacy plot cache sidecars", async () => {
   const options = {
     voyageDirectory: dir,
     logDirectory: dir,
-    clipDirectory: dir,
   };
   const first = await _private.analyseFileSource("logs", fileName, options, 100);
   const cachePath = _private.plotCachePath(file);
@@ -1187,6 +1230,12 @@ test("web app exposes DR plot-fix overlay controls", async () => {
 
   assert.match(html, /id="toggleDrFixes"/);
   assert.match(html, /id="reviewSelected"/);
+  assert.doesNotMatch(html, />Clips</);
+  assert.doesNotMatch(html, />Logs</);
+  assert.doesNotMatch(html, /class="file-tab/);
+  assert.doesNotMatch(app, /activeKind/);
+  assert.doesNotMatch(app, /fileTabs/);
+  assert.doesNotMatch(app, /updateFileTabs/);
   assert.match(html, /id="reviewPanel"/);
   assert.match(app, /function renderDrPlotFixes/);
   assert.match(app, /function renderReview/);

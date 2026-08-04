@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>AJRM Marine Voyage Viewer</title>
     <link rel="stylesheet" href="./leaflet.css">
-    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./styles.css?v=0.6.6">
   </head>
   <body>
     <div id="map" class="map" aria-label="Voyage chart"></div>
@@ -19,7 +19,7 @@
         </div>
       </div>
       <div class="top-actions">
-        <button id="toggleVoyages" type="button" aria-pressed="true">Recordings</button>
+        <button id="toggleVoyages" type="button" aria-pressed="true">Voyages</button>
         <button id="toggleCharts" type="button">Charts</button>
         <button id="refreshVoyages" type="button">Refresh</button>
         <button id="toggleSummary" type="button" aria-pressed="true">Summary</button>
@@ -39,16 +39,11 @@
     <aside id="voyageDrawer" class="drawer drawer-left open" aria-label="Voyages">
       <div class="drawer-header">
         <div>
-          <h2>Recordings</h2>
+          <h2>Voyages</h2>
           <p id="statusLine">Loading…</p>
         </div>
       </div>
-      <div class="file-tabs" role="tablist" aria-label="Recording type">
-        <button class="file-tab active" type="button" data-kind="voyages" aria-pressed="true">Voyages</button>
-        <button class="file-tab" type="button" data-kind="clips" aria-pressed="false">Clips</button>
-        <button class="file-tab" type="button" data-kind="logs" aria-pressed="false">Logs</button>
-      </div>
-      <div class="selected-actions" aria-label="Selected recording actions">
+      <div class="selected-actions" aria-label="Selected voyage actions">
         <button id="plotSelected" type="button" disabled>Plot</button>
         <button id="reviewSelected" type="button" disabled>Review</button>
         <button id="centrePlot" type="button" disabled>Centre plot</button>
@@ -57,8 +52,8 @@
         <a id="downloadGpx" class="download-link disabled" href="#" download aria-disabled="true">Export GPX</a>
         <a id="downloadSelected" class="download-link disabled" href="#" download aria-disabled="true">Download</a>
       </div>
-      <p id="selectedDetails" class="selected-details">Select a voyage, clip, or log.</p>
-      <div id="voyageList" class="voyage-list" role="listbox" aria-label="Recordings"></div>
+      <p id="selectedDetails" class="selected-details">Select a voyage.</p>
+      <div id="voyageList" class="voyage-list" role="listbox" aria-label="Voyages"></div>
     </aside>
 
     <aside id="chartDrawer" class="drawer drawer-right" aria-label="Charts">
@@ -119,6 +114,6 @@
     <div id="toast" class="toast" role="status"></div>
     <script src="./leaflet.js"></script>
     <script src="./protomaps-leaflet.js"></script>
-    <script src="./app.js"></script>
+    <script src="./app.js?v=0.6.6"></script>
   </body>
 </html>

@@ -1,10 +1,10 @@
 {
   "name": "signalk-ajrm-marine-voyage-viewer",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "description": "Plots and exports AJRM Marine Capture voyage tracks.",
   "main": "plugin/index.js",
   "scripts": {
-    "test": "node --test \"test/**/*.test.mjs\" && node --check plugin/index.js && node --check public/app.js"
+    "test": "node --test && node --check plugin/index.js && node --check public/app.js"
   },
   "keywords": [
     "signalk-node-server-plugin",

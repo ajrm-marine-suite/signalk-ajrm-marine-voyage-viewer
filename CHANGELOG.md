@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.6
+
+- Analyse current Capture bundles from their explicitly declared
+  `ajrm-marine-canonical-input-v1` stream at `input/yden-input.jsonl`.
+- Remove the retired Clips and individual Logger-file lists and configuration;
+  Voyage Viewer now presents only completed voyage bundles.
+- Retain old embedded capture segments and exact external Logger references as
+  internal voyage-bundle compatibility paths.
+
 ## 0.6.5
 
 - Calculate pilot helm bias only from TP32 position samples captured while the

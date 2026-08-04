@@ -8,7 +8,6 @@ const elements = {
   voyageDrawer: document.querySelector("#voyageDrawer"),
   chartDrawer: document.querySelector("#chartDrawer"),
   chartStatus: document.querySelector("#chartStatus"),
-  fileTabs: [...document.querySelectorAll(".file-tab")],
   baseMapChoices: [...document.querySelectorAll('input[name="baseMap"]')],
   autoCharts: document.querySelector("#checkAutoCharts"),
   openSeaMap: document.querySelector("#checkOpenSeaMap"),
@@ -53,7 +52,7 @@ let seamarkLayer;
 const chartLayerZIndex = 450;
 const seamarkLayerZIndex = 650;
 let progressTimer = null;
-let activeKind = "voyages";
+const VOYAGE_KIND = "voyages";
 let currentFiles = [];
 let selectedFile = null;
 let plottedBounds = null;
@@ -404,17 +403,15 @@ function keepChartLayersOnTop() {
   markerLayer?.eachLayer((layer) => layer.bringToFront?.());
 }
 
-async function loadFiles(kind = activeKind) {
-  activeKind = kind;
+async function loadFiles() {
   selectedFile = null;
   currentFiles = [];
-  updateFileTabs();
   updateSelection();
   showSelectedPlaceholder();
-  elements.statusLine.textContent = `Loading ${labelForKind(kind, "plural").toLowerCase()}…`;
+  elements.statusLine.textContent = "Loading voyages…";
   elements.voyageList.innerHTML = "";
   try {
-    const data = await requestJson(`${apiBase}/files/${kind}`);
+    const data = await requestJson(`${apiBase}/files/${VOYAGE_KIND}`);
     currentFiles = data.files || [];
     renderFiles(currentFiles);
   } catch (error) {
@@ -424,9 +421,9 @@ async function loadFiles(kind = activeKind) {
 }
 
 function renderFiles(files) {
-  elements.statusLine.textContent = `${files.length} ${labelForKind(activeKind, files.length === 1 ? "singular" : "plural").toLowerCase()} found`;
+  elements.statusLine.textContent = `${files.length} ${files.length === 1 ? "voyage" : "voyages"} found`;
   if (files.length === 0) {
-    elements.voyageList.innerHTML = `<p class="empty">No ${labelForKind(activeKind, "plural").toLowerCase()} found in the configured directory.</p>`;
+    elements.voyageList.innerHTML = '<p class="empty">No voyages found in the configured directory.</p>';
     return;
   }
   elements.voyageList.replaceChildren(
@@ -468,7 +465,7 @@ function updateSelection() {
   setLinkEnabled(elements.downloadGpx, hasSelection);
   setLinkEnabled(elements.downloadSelected, hasSelection);
   if (!hasSelection) {
-    elements.selectedDetails.textContent = `Select one of the ${labelForKind(activeKind, "plural").toLowerCase()} below.`;
+    elements.selectedDetails.textContent = "Select one of the voyages below.";
     elements.downloadGpx.href = "#";
     elements.downloadSelected.href = "#";
     return;
@@ -476,9 +473,9 @@ function updateSelection() {
   elements.selectedDetails.textContent = selectedFile.comment
     ? `${selectedFile.fileName} · ${selectedFile.comment} · ${fileMeta(selectedFile)}`
     : `${selectedFile.fileName} · ${fileMeta(selectedFile)}`;
-  elements.downloadSelected.href = downloadUrl(activeKind, selectedFile.fileName);
+  elements.downloadSelected.href = downloadUrl(VOYAGE_KIND, selectedFile.fileName);
   elements.downloadSelected.download = selectedFile.fileName;
-  elements.downloadGpx.href = gpxUrl(activeKind, selectedFile.fileName);
+  elements.downloadGpx.href = gpxUrl(VOYAGE_KIND, selectedFile.fileName);
   elements.downloadGpx.download = gpxFileName(selectedFile.fileName);
 }
 
@@ -511,12 +508,12 @@ function clearPlottedLayers() {
 
 async function analyseSelectedFile() {
   if (!selectedFile) return;
-  await analyseFile(activeKind, selectedFile.fileName, { plot: true });
+  await analyseFile(VOYAGE_KIND, selectedFile.fileName, { plot: true });
 }
 
 async function reviewSelectedFile() {
   if (!selectedFile) return;
-  await analyseFile(activeKind, selectedFile.fileName, { plot: false });
+  await analyseFile(VOYAGE_KIND, selectedFile.fileName, { plot: false });
 }
 
 async function analyseFile(kind, fileName, { plot = true } = {}) {
@@ -532,7 +529,7 @@ async function analyseFile(kind, fileName, { plot = true } = {}) {
       `${apiBase}/files/${encodeURIComponent(kind)}/${encodeURIComponent(fileName)}/analyse`,
       { method: "POST" },
     );
-    if (requestId !== analysisRequestId || selectedFile?.fileName !== fileName || activeKind !== kind) {
+    if (requestId !== analysisRequestId || selectedFile?.fileName !== fileName) {
       return;
     }
     setPlotProgress(90, plot ? "Rendering track and summary…" : "Rendering review…");
@@ -557,7 +554,7 @@ function startPlotProgress(fileName) {
   clearInterval(progressTimer);
   elements.plotProgress.classList.remove("hidden", "failed");
   setPlotProgress(0, `Opening ${fileName}…`);
-  const kind = activeKind;
+  const kind = VOYAGE_KIND;
   progressTimer = setInterval(async () => {
     try {
       const response = await fetch(
@@ -614,7 +611,7 @@ function startExportProgress(fileName) {
   elements.plotProgress.classList.remove("hidden", "failed");
   setPlotProgress(8, `Preparing GPX export for ${fileName}…`);
   const stages = [
-    [24, "Opening recording…"],
+    [24, "Opening voyage…"],
     [42, "Reading track points…"],
     [62, "Building GPX file…"],
     [78, "Preparing download…"],
@@ -636,7 +633,7 @@ async function exportSelectedGpx(event) {
   startExportProgress(fileName);
   showDownloadFeedback(elements.downloadGpx, "Preparing…");
   try {
-    const response = await fetch(gpxUrl(activeKind, fileName), { headers: { Accept: "application/gpx+xml" } });
+    const response = await fetch(gpxUrl(VOYAGE_KIND, fileName), { headers: { Accept: "application/gpx+xml" } });
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       throw new Error(text || response.statusText || "GPX export failed");
@@ -658,7 +655,7 @@ function downloadSelectedFile(event) {
     return;
   }
   const fileName = selectedFile.fileName;
-  elements.downloadSelected.href = downloadUrl(activeKind, fileName);
+  elements.downloadSelected.href = downloadUrl(VOYAGE_KIND, fileName);
   showDownloadFeedback(elements.downloadSelected, "Downloading…");
   showToast(
     `Downloading ${fileName}. The browser will stream it directly to disk.`,
@@ -930,7 +927,7 @@ function renderSummary(analysis) {
   const gpsIntegrity = analysis.gpsIntegrity || summary.gpsIntegrity;
   elements.summaryTitle.textContent = analysis.fileName || analysis.id || "Voyage";
   elements.summarySubtitle.textContent = `${formatDateTime(summary.startedAt)} → ${formatDateTime(summary.stoppedAt)}`;
-  elements.downloadGpx.href = analysis.gpxUrl || gpxUrl(analysis.sourceKind || activeKind, analysis.fileName);
+  elements.downloadGpx.href = analysis.gpxUrl || gpxUrl(VOYAGE_KIND, analysis.fileName);
   elements.downloadGpx.download = gpxFileNameFromAnalysis(analysis);
   setLinkEnabled(elements.downloadGpx, true);
   elements.comment.textContent = "";
@@ -1372,23 +1369,6 @@ function fileMeta(file) {
   return parts.filter((part) => part && part !== "—").join(" · ") || "—";
 }
 
-function labelForKind(kind, form = "plural") {
-  const labels = {
-    clips: ["Clip", "Clips"],
-    logs: ["Log", "Logs"],
-    voyages: ["Voyage", "Voyages"],
-  };
-  return (labels[kind] || labels.voyages)[form === "singular" ? 0 : 1];
-}
-
-function updateFileTabs() {
-  for (const tab of elements.fileTabs) {
-    const selected = tab.dataset.kind === activeKind;
-    tab.classList.toggle("active", selected);
-    tab.setAttribute("aria-pressed", String(selected));
-  }
-}
-
 function setLinkEnabled(link, enabled) {
   link.classList.toggle("disabled", !enabled);
   link.setAttribute("aria-disabled", String(!enabled));
@@ -1437,7 +1417,7 @@ function togglePanel(panel) {
 
 elements.toggleVoyages.addEventListener("click", () => togglePanel(elements.voyageDrawer));
 elements.toggleCharts.addEventListener("click", () => togglePanel(elements.chartDrawer));
-elements.refreshVoyages.addEventListener("click", () => loadFiles(activeKind));
+elements.refreshVoyages.addEventListener("click", loadFiles);
 elements.plotSelected.addEventListener("click", analyseSelectedFile);
 elements.reviewSelected.addEventListener("click", reviewSelectedFile);
 elements.centrePlot.addEventListener("click", centrePlot);
@@ -1453,9 +1433,6 @@ elements.toggleDrFixes.addEventListener("click", () => {
   elements.toggleDrFixes.setAttribute("aria-pressed", String(drFixesVisible));
   renderDrPlotFixes();
 });
-for (const tab of elements.fileTabs) {
-  tab.addEventListener("click", () => loadFiles(tab.dataset.kind || "voyages"));
-}
 elements.toggleSummary.addEventListener("click", () => {
   const open = !elements.summaryPanel.classList.contains("open");
   elements.summaryPanel.classList.toggle("open", open);
@@ -1482,6 +1459,5 @@ elements.downloadSelected.addEventListener("click", (event) => {
 
 initMap();
 syncPanelButtons();
-updateFileTabs();
 showSelectedPlaceholder();
 loadFiles();

@@ -13,16 +13,16 @@ const METERS_TO_NM = 1 / 1852;
 const DEFAULT_LOG_ROOT = "~/AJRMMarineLogs";
 const DEFAULT_VOYAGE_DIRECTORY = `${DEFAULT_LOG_ROOT}/voyages`;
 const DEFAULT_LOG_DIRECTORY = `${DEFAULT_LOG_ROOT}/captures`;
-const DEFAULT_CLIP_DIRECTORY = `${DEFAULT_LOG_ROOT}/clips`;
 const LEGACY_LOG_ROOT = ["~/Capture", "PlusLogs"].join("");
 const LEGACY_VOYAGE_DIRECTORY = `${LEGACY_LOG_ROOT}/voyages`;
 const LEGACY_LOG_DIRECTORY = `${LEGACY_LOG_ROOT}/captures`;
-const LEGACY_CLIP_DIRECTORY = `${LEGACY_LOG_ROOT}/clips`;
 const MAX_TRACK_POINTS = 6000;
-const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v1";
+const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v2";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const REVIEW_SCHEMA_VERSION = 2;
-const REVIEW_ENGINE_VERSION = 13;
+const REVIEW_ENGINE_VERSION = 14;
+const CANONICAL_INPUT_CONTRACT = "ajrm-marine-canonical-input-v1";
+const CANONICAL_INPUT_RELATIVE_PATH = "input/yden-input.jsonl";
 const ENGAGED_AUTOPILOT_STATES = new Set(["auto", "heading", "wind", "route"]);
 const MAX_ZIP_TEXT_ENTRY_BYTES = 64 * 1024 * 1024;
 const RECOMPUTED_COMPLETION_PATH = "system/recomputed-replay-completion.json";
@@ -50,16 +50,6 @@ module.exports = function ajrmMarineVoyageViewer(app) {
         type: "string",
         title: "Voyage bundle directory",
         default: DEFAULT_VOYAGE_DIRECTORY,
-      },
-      logDirectory: {
-        type: "string",
-        title: "AJRM Marine Logger logs directory",
-        default: DEFAULT_LOG_DIRECTORY,
-      },
-      clipDirectory: {
-        type: "string",
-        title: "AJRM Marine Logger clips directory",
-        default: DEFAULT_CLIP_DIRECTORY,
       },
       maxTrackPoints: {
         type: "integer",
@@ -249,9 +239,8 @@ module.exports = function ajrmMarineVoyageViewer(app) {
       plugin: plugin.id,
       version: packageInfo.version,
       voyageDirectory: options.voyageDirectory,
-      logDirectory: options.logDirectory,
-      clipDirectory: options.clipDirectory,
       capabilities: {
+        voyageOnly: true,
         plot: true,
         download: true,
         review: true,
@@ -292,8 +281,9 @@ async function prepareCaptureVoyageDownload(app, fileName) {
 function normalizeOptions(value = {}) {
   return {
     voyageDirectory: String(value.voyageDirectory || defaultDirectory(DEFAULT_VOYAGE_DIRECTORY, LEGACY_VOYAGE_DIRECTORY)),
+    // Retained internally only so old reference-mode voyage bundles can still
+    // resolve exact Logger files. Logs are no longer exposed for direct review.
     logDirectory: String(value.logDirectory || defaultDirectory(DEFAULT_LOG_DIRECTORY, LEGACY_LOG_DIRECTORY)),
-    clipDirectory: String(value.clipDirectory || defaultDirectory(DEFAULT_CLIP_DIRECTORY, LEGACY_CLIP_DIRECTORY)),
     maxTrackPoints: clampInteger(value.maxTrackPoints, 500, 50000, MAX_TRACK_POINTS),
   };
 }
@@ -306,14 +296,15 @@ function defaultDirectory(preferredDirectory, legacyDirectory) {
 
 function directoryForKind(kind, currentOptions) {
   if (kind === "voyages") return expandHome(currentOptions.voyageDirectory);
-  if (kind === "clips") return expandHome(currentOptions.clipDirectory);
+  // Internal compatibility only: legacy voyage bundles may still resolve or
+  // analyse exact Logger sources. safeFileKind() prevents direct HTTP access.
   if (kind === "logs") return expandHome(currentOptions.logDirectory);
   throw new Error(`Unsupported file kind: ${kind}`);
 }
 
 async function listFilesForKind(kind, currentOptions) {
-  if (kind === "voyages") return listVoyages(currentOptions.voyageDirectory);
-  return listRecordings(directoryForKind(kind, currentOptions));
+  if (kind !== "voyages") throw new Error(`Unsupported file kind: ${kind}`);
+  return listVoyages(currentOptions.voyageDirectory);
 }
 
 async function listVoyages(voyageDirectory) {
@@ -797,6 +788,25 @@ async function resolveVoyageCaptureSources(
   currentOptions,
   index = {},
 ) {
+  const canonicalInput = index?.canonicalInput;
+  if (canonicalInput?.contract === CANONICAL_INPUT_CONTRACT) {
+    const innerPath = String(
+      canonicalInput.fileName || CANONICAL_INPUT_RELATIVE_PATH,
+    );
+    const entry = await zipEntryMetadata(voyagePath, innerPath);
+    if (!entry) {
+      throw new Error(
+        `Voyage bundle declares ${CANONICAL_INPUT_CONTRACT}, but ${innerPath} is missing.`,
+      );
+    }
+    return [{
+      kind: "zip",
+      voyagePath,
+      innerPath,
+      bytes: entry.uncompressedSize,
+      contract: CANONICAL_INPUT_CONTRACT,
+    }];
+  }
   if (captureFiles.length) {
     const sources = [];
     for (const captureFile of captureFiles) {
@@ -898,7 +908,7 @@ function voyageCaptureSourceError(captureReferences) {
   if (captureReferences.length) {
     return "Voyage bundle references AJRM Marine Logger files, but none were found on this server.";
   }
-  return "Voyage bundle has no capture files or AJRM Marine Logger references.";
+  return "Voyage bundle has no canonical input, embedded capture files, or AJRM Marine Logger references.";
 }
 
 async function scanCaptureSources(
@@ -3309,17 +3319,13 @@ function safeVoyageFile(value) {
 
 function safeFileKind(value) {
   const kind = String(value || "").toLowerCase();
-  if (kind === "voyages" || kind === "clips" || kind === "logs") return kind;
+  if (kind === "voyages") return kind;
   throw new Error("Invalid file kind.");
 }
 
 function safeFileNameForKind(kind, value) {
-  if (kind === "voyages") return safeVoyageFile(value);
-  const file = path.basename(String(value || ""));
-  if (!file || file !== value || !/\.jsonl(\.gz)?$/i.test(file)) {
-    throw new Error("Invalid recording file.");
-  }
-  return file;
+  if (kind !== "voyages") throw new Error("Invalid file kind.");
+  return safeVoyageFile(value);
 }
 
 function recordingStartedAtFromFileName(fileName) {

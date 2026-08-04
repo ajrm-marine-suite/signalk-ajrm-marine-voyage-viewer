@@ -1,11 +1,16 @@
 # AJRM Marine Voyage Viewer
 
-Signal K webapp for plotting AJRM Marine Capture voyage bundles and legacy
-Signal K Logger clips and logs.
+Signal K webapp for plotting and reviewing AJRM Marine Capture voyage bundles.
 
-The app lists AJRM Marine Capture voyage bundles plus legacy Logger clips and
-logs. Any selected voyage, clip, or log can be plotted on a Leaflet chart,
-exported as GPX 1.1, downloaded, and summarised.
+The app now lists voyages only. Any selected voyage can be plotted on a Leaflet
+chart, reviewed, exported as GPX 1.1, or downloaded. Individual Logger files
+and the retired Clips workflow are no longer exposed in the user interface.
+
+Current Capture bundles declare one canonical physical-input stream using the
+`ajrm-marine-canonical-input-v1` contract at `input/yden-input.jsonl`. Voyage
+Viewer reads that declared stream directly. Legacy embedded capture segments
+and exact external Logger references remain an internal compatibility path for
+older voyage bundles, without restoring separate Logs or Clips lists.
 
 Current builds preserve the navigation evidence carried by Capture's compact
 `tracks/dr-track.jsonl` and copied DR Plotter fixes: integrity assurance,
@@ -67,17 +72,11 @@ Version `0.1.15` added support for old reference-mode voyage bundles by reading
 their referenced AJRM Marine Logger files when those files still exist on the
 server.
 
-The recording browser keeps the historical three-tab model:
-
-- `Voyages`: zipped AJRM Marine Capture voyage bundles
-- `Clips`: legacy extracted `.jsonl` / `.jsonl.gz` clips
-- `Logs`: legacy `.jsonl` / `.jsonl.gz` Logger files
-
-Select one row, then use the shared Plot, Export GPX, or Download buttons.
+Select a voyage, then use Plot, Review, Export GPX, or Download.
 
 ## GPX export
 
-Each selected recording can be exported as GPX. The GPX contains the plotted
+Each selected voyage can be exported as GPX. The GPX contains the plotted
 own-vessel track with timestamped track points so other charting/navigation
 tools can display the route. When a voyage has a comment, the GPX download
 filename is based on that comment.
@@ -93,25 +92,24 @@ webapp opening the chart resource API first.
 
 ## Plot progress
 
-Recording analysis runs on the Signal K server. The webapp shows a staged
+Voyage analysis runs on the Signal K server. The webapp shows a staged
 horizontal progress bar driven by actual server-side byte and phase progress
-while it opens the voyage, clip, or log, scans the capture data, finds the
+while it opens the voyage, scans the canonical or legacy capture data, finds the
 track, computes the summary, and renders the chart overlay or GPX download.
 
 ## Plot cache
 
-Voyage Viewer writes disposable sidecar files beside the selected source
-recording:
+Voyage Viewer writes disposable sidecar files beside the selected voyage:
 
 - `<source>.ajrm-marine-plot.json`: cached app analysis for fast re-plotting
 - `<source>.gpx`: cached GPX export
 
-The source recording remains authoritative. A sidecar is used only when its
+The source voyage remains authoritative. A sidecar is used only when its
 source file size and modification time still match. If the source changes, the
 cache is ignored and rebuilt.
 
 After plotting, the map automatically centres and zooms to show the whole
-recording. The **Centre plot** button repeats that fit after you pan or zoom
+voyage. The **Centre plot** button repeats that fit after you pan or zoom
 elsewhere.
 
 ## Summary fields
@@ -151,7 +149,7 @@ do not need to unzip large voyage bundles.
 ## Public Beta
 
 Plots and exports voyage tracks. For replay, load the voyage in AJRM Marine
-Logger and view it in Display.
+Capture and view it in Display.
 
 Development assistance: OpenAI Codex helped with code generation, refactoring, and automated testing during the beta development cycle.
 ## License and commercial use
