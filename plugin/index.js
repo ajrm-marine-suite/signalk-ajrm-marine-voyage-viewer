@@ -20,7 +20,7 @@ const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v2";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const REVIEW_SCHEMA_VERSION = 2;
-const REVIEW_ENGINE_VERSION = 14;
+const REVIEW_ENGINE_VERSION = 15;
 const CANONICAL_INPUT_CONTRACT = "ajrm-marine-canonical-input-v1";
 const CANONICAL_INPUT_RELATIVE_PATH = "input/yden-input.jsonl";
 const ENGAGED_AUTOPILOT_STATES = new Set(["auto", "heading", "wind", "route"]);
@@ -624,9 +624,6 @@ async function analyseVoyage(
     },
   });
   const ownContext = chooseOwnContext(firstPass.positionCounts);
-  if (!ownContext) {
-    throw new Error("No own-vessel navigation.position samples found.");
-  }
   const voyageWindow = {
     startMs: Date.parse(index.startedAt || ""),
     endMs: Date.parse(index.stoppedAt || ""),
@@ -657,7 +654,12 @@ async function analyseVoyage(
   emitAnalysisProgress(onProgress, 87, "reading-navigation-evidence", "Reading DR and navigation evidence");
   const drTracks = (await readVoyageDrTracks(voyagePath, index, maxTrackPoints)) ||
     buildDrTracks(secondPass.drTrackSamples, maxTrackPoints, "capture");
-  const track = preferredVoyageTrack(sortTrack(secondPass.track), drTracks);
+  // A completed bundle can intentionally contain only BITE/software evidence.
+  // Do not promote injected or retained DR positions into an own-vessel voyage
+  // track when the canonical input contains no explicit own-vessel position.
+  const track = ownContext
+    ? preferredVoyageTrack(sortTrack(secondPass.track), drTracks)
+    : [];
   const drPlotFixes = await readVoyageDrPlotFixes(voyagePath, index);
   const gpsIntegrity = buildGpsIntegrityAnalysis(secondPass.gpsIntegritySamples);
   const traffic = buildTrafficAnalysis(
@@ -1076,7 +1078,7 @@ function scanRecord(record, ownContext, result, window) {
           result.speedSamples.push({ ts: timestamp, knots });
           result.maxSogKnots = maxNumber(result.maxSogKnots, knots);
         }
-      } else if (isWindSpeedPath(valuePath)) {
+      } else if (ownContext && context === ownContext && isWindSpeedPath(valuePath)) {
         if (!isInsideWindow(timestamp, window)) continue;
         const knots = metersPerSecondToKnots(value);
         if (!Number.isFinite(knots)) continue;

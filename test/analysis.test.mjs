@@ -216,6 +216,55 @@ test("analyses current canonical-input voyage bundles without legacy capture fil
   assert.ok(analysis.summary.distanceNm > 0.49 && analysis.summary.distanceNm < 0.51);
 });
 
+test("reviews report-only BITE voyages with an empty canonical input", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-bite-only-"));
+  const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-bite-only-bundle-"));
+  const inputRelativePath = path.join("input", "yden-input.jsonl");
+  const biteRelativePath = path.join("system", "bite-reports", "run-all.json");
+  await fs.mkdir(path.join(bundleDir, "input"), { recursive: true });
+  await fs.mkdir(path.join(bundleDir, "system", "bite-reports"), { recursive: true });
+  await fs.writeFile(path.join(bundleDir, inputRelativePath), "");
+  await fs.writeFile(
+    path.join(bundleDir, biteRelativePath),
+    JSON.stringify({
+      scenario: "run-all",
+      title: "AJRM Marine BITE Run all",
+      result: "pass",
+      startedAt: "2026-08-03T20:48:54.000Z",
+      finishedAt: "2026-08-03T20:53:19.000Z",
+    }),
+  );
+  await fs.writeFile(
+    path.join(bundleDir, "index.json"),
+    JSON.stringify({
+      id: "voyage-20260803T204848Z",
+      comment: "AJRM Marine BITE Run all",
+      startedAt: "2026-08-03T20:48:48.538Z",
+      stoppedAt: "2026-08-03T20:53:20.409Z",
+      startReason: "BITE run all",
+      stopReason: "BITE run all complete",
+      canonicalInput: {
+        contract: "ajrm-marine-canonical-input-v1",
+        schemaVersion: 1,
+        fileName: "input/yden-input.jsonl",
+        records: 0,
+        bytes: 0,
+        complete: true,
+      },
+    }),
+  );
+  const zipPath = path.join(dir, "voyage-20260803T204848Z.zip");
+  await writeZip(zipPath, bundleDir, ["index.json", inputRelativePath, biteRelativePath]);
+
+  const analysis = await _private.analyseVoyage(zipPath, { maxTrackPoints: 100 });
+
+  assert.equal(analysis.ownContext, null);
+  assert.equal(analysis.summary.trackPoints, 0);
+  assert.equal(analysis.review.softwareStatus, "green");
+  assert.equal(analysis.review.bite.passed, 1);
+  assert.ok(analysis.review.findings.some((finding) => finding.title === "No own-vessel track"));
+});
+
 test("analyses reference-mode voyage bundles from AJRM Marine Logger files", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-reference-"));
   const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-reference-bundle-"));

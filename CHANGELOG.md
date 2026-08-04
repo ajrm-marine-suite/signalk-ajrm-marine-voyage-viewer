@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.7
+
+- Review report-only/BITE voyage bundles even when their canonical input has no
+  own-vessel positions, showing the bundled software results and an explicit
+  no-track voyage finding instead of aborting the review.
+
 ## 0.6.6
 
 - Analyse current Capture bundles from their explicitly declared
