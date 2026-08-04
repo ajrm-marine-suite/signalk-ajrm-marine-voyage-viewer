@@ -20,7 +20,7 @@ const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v2";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const REVIEW_SCHEMA_VERSION = 2;
-const REVIEW_ENGINE_VERSION = 15;
+const REVIEW_ENGINE_VERSION = 16;
 const CANONICAL_INPUT_CONTRACT = "ajrm-marine-canonical-input-v1";
 const CANONICAL_INPUT_RELATIVE_PATH = "input/yden-input.jsonl";
 const ENGAGED_AUTOPILOT_STATES = new Set(["auto", "heading", "wind", "route"]);
@@ -661,10 +661,21 @@ async function analyseVoyage(
     ? preferredVoyageTrack(sortTrack(secondPass.track), drTracks)
     : [];
   const drPlotFixes = await readVoyageDrPlotFixes(voyagePath, index);
-  const gpsIntegrity = buildGpsIntegrityAnalysis(secondPass.gpsIntegritySamples);
+  const snapshotEvidence = await readVoyageSnapshotEvidence(voyagePath);
+  const gpsIntegrity = buildGpsIntegrityAnalysis([
+    ...secondPass.gpsIntegritySamples,
+    ...snapshotEvidence.gpsIntegritySamples,
+  ]);
   const traffic = buildTrafficAnalysis(
-    secondPass.trafficNotificationSamples,
-    secondPass.trafficProjectionMetrics,
+    [
+      ...secondPass.trafficNotificationSamples,
+      ...snapshotEvidence.trafficAlertSamples,
+    ],
+    mergeTrafficProjectionMetrics(
+      secondPass.trafficProjectionMetrics,
+      snapshotEvidence.trafficProjectionMetrics,
+    ),
+    snapshotEvidence.trafficTargets,
   );
   const markers = hourlyMarkers(track);
   const summary = buildSummary(index, track, secondPass, firstPass, ownContext, gpsIntegrity, traffic);
@@ -1351,6 +1362,155 @@ function emptyTrafficProjectionMetrics() {
   };
 }
 
+async function readVoyageSnapshotEvidence(voyagePath) {
+  const entries = await listZipEntries(voyagePath);
+  const snapshotEntries = entries
+    .map((entry) => entry.fileName)
+    .filter((fileName) =>
+      /^(snapshots\/[^/]+\.json|observations\/evidence\/[^/]+\.json)$/.test(fileName),
+    );
+  const evidence = {
+    gpsIntegritySamples: [],
+    trafficAlertSamples: [],
+    trafficTargets: [],
+    trafficProjectionMetrics: emptyTrafficProjectionMetrics(),
+  };
+  for (const fileName of snapshotEntries) {
+    let document;
+    try {
+      document = await readZipJson(voyagePath, fileName);
+    } catch {
+      continue;
+    }
+    const snapshot = document?.snapshot && typeof document.snapshot === "object"
+      ? document.snapshot
+      : document;
+    const timestamp =
+      stringOrNull(snapshot?.timestamp) ||
+      stringOrNull(document?.recordedAt) ||
+      null;
+    const suite = snapshot?.suiteDiagnostics;
+    if (!suite || typeof suite !== "object") continue;
+
+    const integrityState = unwrapValue(
+      suite.ajrmMarineGpsIntegrity?.navigationIntegrity,
+    );
+    const integritySample = normalizeGpsIntegritySample(
+      integrityState,
+      timestamp,
+    );
+    if (integritySample) evidence.gpsIntegritySamples.push(integritySample);
+
+    const trafficState = unwrapValue(suite.trafficCore?.targets);
+    if (
+      !trafficState ||
+      trafficState.contract !== "ajrm-marine-traffic-targets" ||
+      !Array.isArray(trafficState.targets)
+    ) {
+      continue;
+    }
+    const trafficTimestamp =
+      stringOrNull(trafficState.generatedAt) || timestamp;
+    accumulateTrafficProjectionMetrics(
+      evidence.trafficProjectionMetrics,
+      trafficState,
+      trafficTimestamp,
+    );
+    for (const target of trafficState.targets) {
+      const normalizedTarget = normalizeSnapshotTrafficTarget(
+        target,
+        trafficTimestamp,
+      );
+      if (!normalizedTarget) continue;
+      evidence.trafficTargets.push(normalizedTarget.target);
+      if (normalizedTarget.alert) {
+        evidence.trafficAlertSamples.push(normalizedTarget.alert);
+      }
+    }
+  }
+  return evidence;
+}
+
+function normalizeSnapshotTrafficTarget(target, timestamp) {
+  if (!target || typeof target !== "object") return null;
+  const encounter = target.encounter && typeof target.encounter === "object"
+    ? target.encounter
+    : {};
+  const mmsi = stringOrNull(target.mmsi) || extractMmsi(target.id);
+  const name = stringOrNull(target.name);
+  const targetContext = stringOrNull(target.id);
+  const key = mmsi || targetContext || name;
+  if (!key) return null;
+  const size = trafficVesselSize(encounter.vesselSize);
+  const state = stringOrNull(encounter.state);
+  const severity = trafficSeverity(null, state);
+  return {
+    target: {
+      key,
+      name: name || "",
+      mmsi: mmsi || "",
+      targetContext,
+      size,
+    },
+    alert: severity
+      ? {
+          ts: timestamp,
+          eventId: `snapshot:${key}:${String(state).toLowerCase()}`,
+          severity,
+          label: severity === "collision" ? "Collision alarm" : "Traffic advisory",
+          message: "",
+          title: name,
+          mmsi,
+          targetContext,
+          size,
+          cpaMeters: numberOrNull(encounter.cpa),
+          tcpaSeconds: numberOrNull(encounter.tcpa),
+          announcementSchedule: null,
+          evidenceSource: "snapshot",
+        }
+      : null,
+  };
+}
+
+function mergeTrafficProjectionMetrics(left, right) {
+  const merged = emptyTrafficProjectionMetrics();
+  const sources = [left, right].filter(Boolean);
+  merged.available = sources.some((source) => source.available === true);
+  for (const source of sources) {
+    for (const key of [
+      "projectionUpdates",
+      "targetObservations",
+      "projectedPositions",
+      "unusablePositions",
+      "staleTargets",
+    ]) {
+      merged[key] += Number(source[key]) || 0;
+    }
+    merged.maxMeasurementAgeSeconds = maxNumber(
+      merged.maxMeasurementAgeSeconds,
+      source.maxMeasurementAgeSeconds,
+    );
+    merged.maxProjectionSeconds = maxNumber(
+      merged.maxProjectionSeconds,
+      source.maxProjectionSeconds,
+    );
+    merged.maxAnnouncementLeadSeconds = maxNumber(
+      merged.maxAnnouncementLeadSeconds,
+      source.maxAnnouncementLeadSeconds,
+    );
+    for (const [reason, count] of Object.entries(source.reasons || {})) {
+      merged.reasons[reason] = (merged.reasons[reason] || 0) + (Number(count) || 0);
+    }
+    if (source.firstAt && (!merged.firstAt || source.firstAt < merged.firstAt)) {
+      merged.firstAt = source.firstAt;
+    }
+    if (source.lastAt && (!merged.lastAt || source.lastAt > merged.lastAt)) {
+      merged.lastAt = source.lastAt;
+    }
+  }
+  return merged;
+}
+
 function accumulateTrafficProjectionMetrics(metrics, value, timestamp) {
   const projection = unwrapValue(value);
   if (!projection || typeof projection !== "object") return;
@@ -1748,7 +1908,7 @@ function buildGpsIntegrityAnalysis(samples) {
   }
 
   const events = [];
-  const finalCounters = sorted[sorted.length - 1].counters || {};
+  const finalCounters = voyageCounterIncrements(sorted);
   let previous = null;
   let lostStart = null;
   let lostPeriods = 0;
@@ -1887,6 +2047,36 @@ function buildGpsIntegrityAnalysis(samples) {
   };
 }
 
+function voyageCounterIncrements(samples) {
+  const keys = [
+    "evaluations",
+    "acceptedFixes",
+    "rejectedFixes",
+    "positionJumps",
+    "lostFixes",
+    "degradedSignals",
+    "drDiscrepancies",
+  ];
+  if (!Array.isArray(samples) || samples.length < 2) {
+    return Object.fromEntries(keys.map((key) => [key, null]));
+  }
+  const totals = Object.fromEntries(keys.map((key) => [key, 0]));
+  let previous = samples[0]?.counters || {};
+  for (const sample of samples.slice(1)) {
+    const current = sample?.counters || {};
+    for (const key of keys) {
+      const currentValue = countOrNull(current[key]);
+      const previousValue = countOrNull(previous[key]);
+      if (currentValue === null || previousValue === null) continue;
+      totals[key] += currentValue >= previousValue
+        ? currentValue - previousValue
+        : currentValue;
+    }
+    previous = current;
+  }
+  return totals;
+}
+
 function isGpsLostIntegritySample(sample) {
   return sample?.trust === "lost" || sample?.gps?.fixValid === false;
 }
@@ -1945,6 +2135,7 @@ function sortTrack(track) {
 function buildTrafficAnalysis(
   samples = [],
   projectionMetrics = emptyTrafficProjectionMetrics(),
+  targetEvidence = [],
 ) {
   const eventsById = new Map();
   for (const sample of samples) {
@@ -1960,6 +2151,21 @@ function buildTrafficAnalysis(
     .filter((event) => event.severity === "advisory" || event.severity === "collision")
     .sort((left, right) => Date.parse(left.ts || "") - Date.parse(right.ts || ""));
   const vessels = new Map();
+  for (const target of targetEvidence) {
+    if (!target?.key) continue;
+    const existing = vessels.get(target.key) || {
+      key: target.key,
+      name: target.name || "",
+      mmsi: target.mmsi || "",
+      size: target.size || "unknown",
+      advisories: 0,
+      collisions: 0,
+    };
+    if (!existing.name && target.name) existing.name = target.name;
+    if (!existing.mmsi && target.mmsi) existing.mmsi = target.mmsi;
+    if (existing.size === "unknown" && target.size) existing.size = target.size;
+    vessels.set(target.key, existing);
+  }
   let closestCpaMeters = null;
   let closestEvent = null;
   for (const event of events) {
@@ -2003,8 +2209,13 @@ function buildTrafficAnalysis(
     (schedule) => schedule.targetObservationRecent === false,
   ).length;
   return {
-    available: events.length > 0 || projectionMetrics.available === true,
+    available:
+      events.length > 0 ||
+      vesselList.length > 0 ||
+      projectionMetrics.available === true,
     events: events.length,
+    notificationEvents: events.filter((event) => event.evidenceSource !== "snapshot").length,
+    snapshotAlertStates: events.filter((event) => event.evidenceSource === "snapshot").length,
     advisories,
     collisionAlerts: collisions,
     vesselsEncountered: vesselList.length,
@@ -2235,13 +2446,13 @@ function buildVoyageReview({
       ? ` Closest reported CPA was ${formatReviewDistance(traffic.closestCpaMeters)}${traffic.closestCpaEvent?.title ? ` for ${traffic.closestCpaEvent.title}` : ""}.`
       : "";
     paragraphs.push(
-      `Traffic review found ${traffic.vesselsEncountered} vessel${traffic.vesselsEncountered === 1 ? "" : "s"} encountered${sizeParts.length ? ` (${sizeParts.join(", ")})` : ""}, ${traffic.advisories} traffic advisories, and ${traffic.collisionAlerts} collision alerts.${closest}`,
+      `Traffic review found ${traffic.vesselsEncountered} vessel${traffic.vesselsEncountered === 1 ? "" : "s"} encountered${sizeParts.length ? ` (${sizeParts.join(", ")})` : ""}, ${traffic.advisories} advisory state${traffic.advisories === 1 ? "" : "s"}, and ${traffic.collisionAlerts} collision-alarm state${traffic.collisionAlerts === 1 ? "" : "s"}.${closest}`,
     );
     findings.push({
       category: "voyage",
       level: "green",
-      title: "Traffic alerts reviewed",
-      detail: `${traffic.collisionAlerts} collision alert${traffic.collisionAlerts === 1 ? "" : "s"} and ${traffic.advisories} advisor${traffic.advisories === 1 ? "y" : "ies"} were recorded for ${traffic.vesselsEncountered} vessel${traffic.vesselsEncountered === 1 ? "" : "s"}. Alert counts are informational and do not make the voyage data amber by themselves.`,
+      title: "Traffic evidence reviewed",
+      detail: `${traffic.notificationEvents || 0} notification${traffic.notificationEvents === 1 ? "" : "s"} and ${traffic.snapshotAlertStates || 0} explicit snapshot alert state${traffic.snapshotAlertStates === 1 ? "" : "s"} were found for ${traffic.vesselsEncountered} vessel${traffic.vesselsEncountered === 1 ? "" : "s"}. Alert counts are informational and do not make the voyage data amber by themselves.`,
     });
     addTrafficProjectionReview(findings, paragraphs, traffic);
   } else {
@@ -2401,13 +2612,13 @@ function buildReviewHighlights({
         : comparisonUnavailable
           ? "fix checks clear · DR comparison unavailable"
           : "healthy",
-      gpsIssues || comparisonUnavailable ? "amber" : "green",
+      gpsIssues ? "amber" : "green",
     ));
   } else {
     highlights.push(reviewHighlight("GPS Integrity", "not recorded", "amber"));
   }
   const fixCount = (drPlotFixes?.plotFixes || []).length;
-  highlights.push(reviewHighlight("DR fixes", fixCount ? String(fixCount) : "none bundled", fixCount ? "green" : "amber"));
+  highlights.push(reviewHighlight("DR fixes", fixCount ? String(fixCount) : "none recorded", "green"));
   if (index.interruptedByRestart || /restart/i.test(String(index.stopReason || ""))) {
     highlights.push(reviewHighlight("Recording", "recovered after restart", "green"));
   } else if (index.stopReason) {
@@ -2470,10 +2681,10 @@ function addTrafficProjectionReview(findings, paragraphs, traffic) {
       .join(", ");
     findings.push({
       category: "voyage",
-      level: "amber",
-      title: "Traffic positions withheld or stale",
+      level: "green",
+      title: "Stale Traffic positions safely withheld",
       detail:
-        `${projection.unusablePositions || 0} target-position calculations were withheld and ${projection.staleTargets || 0} stale target observations were recorded${reasons ? `; reasons: ${reasons}` : ""}.`,
+        `${projection.unusablePositions || 0} target-position calculations were withheld and ${projection.staleTargets || 0} stale target observations were recorded${reasons ? `; reasons: ${reasons}` : ""}. Withholding stale targets is the expected safe behaviour; only an alert that actually used stale evidence is treated as a caution.`,
     });
   } else {
     findings.push({
@@ -2807,20 +3018,6 @@ function reviewBitePassed(report) {
 
 function addGpsReviewFindings(findings, gps) {
   const comparisonUnavailable = gps.finalComparisonAvailable === false;
-  if (comparisonUnavailable) {
-    const assurance = gps.finalIntegrityAssurance
-      ? `${gps.finalIntegrityAssurance} assurance`
-      : "the recorded assurance state";
-    const reason = gps.finalIntegrityReason
-      ? ` ${gps.finalIntegrityReason}`
-      : "";
-    findings.push({
-      category: "voyage",
-      level: "amber",
-      title: "Independent DR comparison unavailable",
-      detail: `GPS Integrity explicitly reported ${assurance} with no valid independent comparison.${reason}`,
-    });
-  }
   if (gps.lostFixes || gps.lostPeriods) {
     findings.push({
       category: "voyage",
@@ -2862,7 +3059,6 @@ function addGpsReviewFindings(findings, gps) {
     });
   }
   if (
-    !comparisonUnavailable &&
     !gps.lostFixes &&
     !gps.positionJumps &&
     !gps.rejectedFixes &&
@@ -2873,7 +3069,7 @@ function addGpsReviewFindings(findings, gps) {
       category: "voyage",
       level: "green",
       title: "GPS Integrity healthy",
-      detail: "No GPS outages, rejected fixes, position jumps, weak-signal events, or GPS/DR mismatches were recorded.",
+      detail: `No GPS outages, rejected fixes, position jumps, weak-signal events, or GPS/DR mismatches were recorded.${comparisonUnavailable ? " The optional independent DR comparison was unavailable." : ""}`,
     });
   }
 }
@@ -2881,25 +3077,6 @@ function addGpsReviewFindings(findings, gps) {
 function addDrReviewFindings(findings, drTracks, drPlotFixes, gps = {}) {
   const jumps = drTracks?.recoveryJumps || [];
   const fixCount = (drPlotFixes?.plotFixes || []).length;
-  const trackAssurance = drTracks?.provenance?.integrityAssurance;
-  const trackIntegrity = drTracks?.provenance?.integrity;
-  const comparisonAvailable =
-    trackIntegrity?.comparisonAvailable ??
-    trackAssurance?.comparisonAvailable ??
-    null;
-  if (comparisonAvailable === false && gps.finalComparisonAvailable !== false) {
-    const status = trackIntegrity?.assurance || trackAssurance?.status;
-    const reason =
-      trackIntegrity?.unavailableReason ||
-      trackAssurance?.reason ||
-      "The provider did not publish an independent comparison for these samples.";
-    findings.push({
-      category: "voyage",
-      level: "amber",
-      title: "Independent DR comparison not plotted",
-      detail: `${status ? `${titleCaseForReview(status)} assurance: ` : ""}${reason}`,
-    });
-  }
   if (jumps.length) {
     const maxJump = jumps.reduce((max, jump) => Math.max(max, Number(jump.meters) || 0), 0);
     findings.push({
@@ -2915,13 +3092,6 @@ function addDrReviewFindings(findings, drTracks, drPlotFixes, gps = {}) {
       level: "green",
       title: "DR plot fixes available",
       detail: `${fixCount} DR/GPS plot fix${fixCount === 1 ? "" : "es"} were bundled for chart review.`,
-    });
-  } else {
-    findings.push({
-      category: "voyage",
-      level: "amber",
-      title: "No DR plot fixes bundled",
-      detail: "The review found no recorded DR plot fixes. Older voyages, or voyages without DR Plotter running, may not include them.",
     });
   }
 }

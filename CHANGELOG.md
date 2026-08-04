@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.8
+
+- Read Traffic target state and GPS Integrity state from current Capture
+  start/stop and observation snapshots, while continuing to use canonical
+  physical input for the vessel track and instrument summaries.
+- Calculate GPS Integrity counters as voyage-local increments rather than
+  displaying the plugins' process-lifetime totals.
+- Treat unavailable optional independent DR comparison and absent manual DR
+  plot fixes as informational, not voyage-data cautions.
+- Recognise stale Traffic positions being withheld as expected safe behaviour;
+  retain an amber finding only when a recorded announcement actually used an
+  observation explicitly marked too old.
+
 ## 0.6.7
 
 - Review report-only/BITE voyage bundles even when their canonical input has no

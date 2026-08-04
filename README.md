@@ -12,6 +12,13 @@ Viewer reads that declared stream directly. Legacy embedded capture segments
 and exact external Logger references remain an internal compatibility path for
 older voyage bundles, without restoring separate Logs or Clips lists.
 
+Current Capture deliberately separates evidence by purpose. Voyage Viewer
+reads physical navigation and instrument data from the declared canonical
+input stream, and reads suite-derived Traffic and GPS Integrity evidence from
+the compact start/stop snapshots and any observation-evidence snapshots. GPS
+Integrity process counters are differenced between snapshots so the summary
+describes the voyage rather than the lifetime of the running plugin.
+
 Current builds preserve the navigation evidence carried by Capture's compact
 `tracks/dr-track.jsonl` and copied DR Plotter fixes: integrity assurance,
 explicit comparison availability, GPS-dependence, leeway/current origin, input
@@ -135,6 +142,11 @@ elsewhere.
   outages, rejected fixes, position jumps, weak-signal events, GPS/DR mismatch
   count, maximum DR uncertainty, integrity assurance/comparison availability,
   GPS-dependence, current/leeway origin, and Navigation Reference provenance
+
+An unavailable independent DR comparison is disclosed as provenance but does
+not by itself make a voyage amber. Likewise, a stale Traffic position that was
+safely withheld is healthy behaviour; an announcement explicitly recorded as
+using an over-age observation remains a caution.
 
 DR Fix popups show the same explicit evidence copied from DR Plotter. Missing
 numeric evidence is displayed as unavailable, while a real zero remains zero.

@@ -216,6 +216,180 @@ test("analyses current canonical-input voyage bundles without legacy capture fil
   assert.ok(analysis.summary.distanceNm > 0.49 && analysis.summary.distanceNm < 0.51);
 });
 
+test("uses current Capture snapshots for Traffic and GPS Integrity review evidence", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-snapshot-review-"));
+  const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-snapshot-review-bundle-"));
+  const inputRelativePath = path.join("input", "yden-input.jsonl");
+  const startSnapshotRelativePath = path.join("snapshots", "start.json");
+  const snapshotRelativePath = path.join("snapshots", "stop.json");
+  await fs.mkdir(path.join(bundleDir, "input"), { recursive: true });
+  await fs.mkdir(path.join(bundleDir, "snapshots"), { recursive: true });
+  const start = captureRecord("2026-08-04T09:48:10.000Z", 56.0, -5.0, 2);
+  start.delta.updates[0].values.push({
+    path: "environment.depth.belowTransducer",
+    value: 12,
+  });
+  const stop = captureRecord("2026-08-04T09:54:37.000Z", 56.00833, -5.0, 3);
+  const records = [start, stop].map((record, index) => ({
+    contract: "ajrm-marine-canonical-input-v1",
+    schemaVersion: 1,
+    elapsedMs: index * 387_000,
+    ...record,
+  }));
+  await fs.writeFile(
+    path.join(bundleDir, inputRelativePath),
+    records.map((record) => JSON.stringify(record)).join("\n"),
+  );
+  await fs.writeFile(
+    path.join(bundleDir, startSnapshotRelativePath),
+    JSON.stringify({
+      timestamp: "2026-08-04T09:48:10.100Z",
+      suiteDiagnostics: {
+        ajrmMarineGpsIntegrity: {
+          navigationIntegrity: {
+            value: {
+              timestamp: "2026-08-04T09:48:10.083Z",
+              trust: "normal",
+              acceptedGps: true,
+              counters: {
+                evaluations: 23,
+                acceptedFixes: 23,
+                rejectedFixes: 0,
+                positionJumps: 0,
+                lostFixes: 0,
+                degradedSignals: 0,
+                drDiscrepancies: 0,
+              },
+              gps: { fixValid: true, positionAgeSeconds: 0.8 },
+            },
+          },
+        },
+      },
+    }),
+  );
+  await fs.writeFile(
+    path.join(bundleDir, snapshotRelativePath),
+    JSON.stringify({
+      timestamp: "2026-08-04T09:54:37.100Z",
+      suiteDiagnostics: {
+        ajrmMarineGpsIntegrity: {
+          navigationIntegrity: {
+            value: {
+              timestamp: "2026-08-04T09:54:37.083Z",
+              trust: "normal",
+              notificationState: "normal",
+              acceptedGps: true,
+              reasons: [],
+              counters: {
+                evaluations: 407,
+                acceptedFixes: 407,
+                rejectedFixes: 0,
+                positionJumps: 0,
+                lostFixes: 0,
+                degradedSignals: 0,
+                drDiscrepancies: 0,
+              },
+              gps: { fixValid: true, positionAgeSeconds: 0.9 },
+              integrityDeadReckoning: {
+                source: "heading-stw",
+                uncertaintyRadiusMeters: 285,
+                assurance: "reduced",
+                comparisonAvailable: false,
+                unavailableReason: "Independent current and leeway are unavailable.",
+              },
+            },
+          },
+        },
+        trafficCore: {
+          targets: {
+            value: {
+              contract: "ajrm-marine-traffic-targets",
+              contractVersion: 1,
+              generatedAt: "2026-08-04T09:54:37.090Z",
+              targets: [
+                {
+                  id: "vessels.urn:mrn:imo:mmsi:235900004",
+                  mmsi: "235900004",
+                  name: "SIM COASTAL SUPPLY",
+                  encounter: {
+                    state: "warn",
+                    vesselSize: "large",
+                    cpa: 1910,
+                    tcpa: 733,
+                    targetPositionProjection: {
+                      usable: true,
+                      projected: true,
+                      ageMs: 211,
+                      projectionSeconds: 5.2,
+                    },
+                  },
+                  freshness: { stale: false },
+                },
+                {
+                  id: "vessels.urn:mrn:imo:mmsi:235900005",
+                  mmsi: "235900005",
+                  name: "SIM HARBOUR TUG",
+                  encounter: {
+                    state: "normal",
+                    vesselSize: "medium",
+                    targetPositionProjection: {
+                      usable: true,
+                      projected: true,
+                      ageMs: 180,
+                      projectionSeconds: 5.1,
+                    },
+                  },
+                  freshness: { stale: false },
+                },
+              ],
+            },
+          },
+        },
+      },
+    }),
+  );
+  await fs.writeFile(
+    path.join(bundleDir, "index.json"),
+    JSON.stringify({
+      id: "voyage-20260804T094809Z",
+      startedAt: "2026-08-04T09:48:09.387Z",
+      stoppedAt: "2026-08-04T09:54:37.432Z",
+      canonicalInput: {
+        contract: "ajrm-marine-canonical-input-v1",
+        schemaVersion: 1,
+        fileName: "input/yden-input.jsonl",
+        records: records.length,
+        complete: true,
+      },
+    }),
+  );
+  const zipPath = path.join(dir, "voyage-20260804T094809Z.zip");
+  await writeZip(zipPath, bundleDir, [
+    "index.json",
+    inputRelativePath,
+    startSnapshotRelativePath,
+    snapshotRelativePath,
+  ]);
+
+  const analysis = await _private.analyseVoyage(zipPath, { maxTrackPoints: 100 });
+
+  assert.equal(analysis.gpsIntegrity.summary.available, true);
+  assert.equal(analysis.gpsIntegrity.summary.evaluations, 384);
+  assert.equal(analysis.traffic.available, true);
+  assert.equal(analysis.traffic.vesselsEncountered, 2);
+  assert.equal(analysis.traffic.advisories, 1);
+  assert.equal(analysis.review.voyageStatus, "green");
+  for (const title of [
+    "No traffic alert history",
+    "No GPS Integrity data",
+    "Independent DR comparison unavailable",
+    "Independent DR comparison not plotted",
+    "No DR plot fixes bundled",
+  ]) {
+    assert.ok(!analysis.review.findings.some((finding) => finding.title === title));
+  }
+});
+
 test("reviews report-only BITE voyages with an empty canonical input", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-bite-only-"));
   const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-bite-only-bundle-"));
@@ -606,10 +780,13 @@ test("summarises GPS Integrity events from captured Signal K state", async () =>
   assert.equal(analysis.gpsIntegrity.provenance.current.driftKnots, null);
   assert.equal(analysis.gpsIntegrity.provenance.current.setTrueDegrees, 0);
   assert.ok(
-    analysis.review.findings.some(
+    !analysis.review.findings.some(
       (finding) => finding.title === "Independent DR comparison unavailable",
     ),
   );
+  assert.ok(analysis.review.paragraphs.some((paragraph) =>
+    paragraph.includes("independent GPS/DR comparison was unavailable")
+  ));
   assert.ok(analysis.gpsIntegrity.events.some((event) => event.type === "gps-lost"));
   assert.ok(analysis.gpsIntegrity.events.some((event) => event.type === "gps-recovered"));
   assert.ok(analysis.gpsIntegrity.events.some((event) => event.type === "position-jump"));
@@ -738,7 +915,7 @@ test("builds English voyage review with separate software and voyage-data lights
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("deliberately inject")));
   assert.ok(analysis.review.paragraphs.some((paragraph) => paragraph.includes("2 vessels encountered")));
   assert.ok(analysis.review.findings.some((finding) => finding.category === "software" && finding.level === "red"));
-  assert.ok(analysis.review.findings.some((finding) => finding.title === "Traffic alerts reviewed" && finding.level === "green"));
+  assert.ok(analysis.review.findings.some((finding) => finding.title === "Traffic evidence reviewed" && finding.level === "green"));
   assert.ok(analysis.review.findings.some((finding) => finding.title === "Traffic projection evidence reviewed" && finding.level === "green"));
   assert.ok(analysis.review.findings.some((finding) => finding.category === "voyage"));
 });
