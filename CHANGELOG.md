@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.9
+
+- Show every recorded skipper note as a chronological Voyage notes list; notes
+  with Snapshot position evidence are numbered on the chart and can be selected
+  to centre the map.
+- Plot captured route selections and show the latest route name and reversal
+  state in the voyage summary.
+- Prefer Capture's explicit own-vessel context when selecting a track, report
+  unreadable snapshot evidence, and treat absent optional depth as neutral.
+- Remove the retired DR Plotter fix overlay and correct the packaged app icon.
+
 ## 0.6.8
 
 - Read Traffic target state and GPS Integrity state from current Capture

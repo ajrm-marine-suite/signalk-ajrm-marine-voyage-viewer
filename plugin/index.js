@@ -20,7 +20,7 @@ const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v2";
 const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const REVIEW_SCHEMA_VERSION = 2;
-const REVIEW_ENGINE_VERSION = 16;
+const REVIEW_ENGINE_VERSION = 17;
 const CANONICAL_INPUT_CONTRACT = "ajrm-marine-canonical-input-v1";
 const CANONICAL_INPUT_RELATIVE_PATH = "input/yden-input.jsonl";
 const ENGAGED_AUTOPILOT_STATES = new Set(["auto", "heading", "wind", "route"]);
@@ -29,7 +29,7 @@ const RECOMPUTED_COMPLETION_PATH = "system/recomputed-replay-completion.json";
 const TRAFFIC_TARGETS_PATH = "plugins.ajrmMarineTraffic.targets";
 const AJRM_MARINE_GPS_INTEGRITY_STATE_PATH = "plugins.ajrmMarineGpsIntegrity.navigationIntegrity";
 const DR_TRACK_RELATIVE_PATH = "tracks/dr-track.jsonl";
-const DR_PLOT_FIXES_RELATIVE_PATH = "tracks/dr-plot-fixes.json";
+const OBSERVATIONS_RELATIVE_PATH = "observations/observations.jsonl";
 const AJRM_MARINE_CAPTURE_API_REGISTRY = Symbol.for("mcdonaldajr.ajrmMarineCaptureApi");
 const STATUS_PATH = "plugins.ajrmMarineVoyageViewer";
 
@@ -623,7 +623,7 @@ async function analyseVoyage(
       );
     },
   });
-  const ownContext = chooseOwnContext(firstPass.positionCounts);
+  const ownContext = chooseOwnContext(firstPass.positionCounts, index.ownContext);
   const voyageWindow = {
     startMs: Date.parse(index.startedAt || ""),
     endMs: Date.parse(index.stoppedAt || ""),
@@ -660,8 +660,9 @@ async function analyseVoyage(
   const track = ownContext
     ? preferredVoyageTrack(sortTrack(secondPass.track), drTracks)
     : [];
-  const drPlotFixes = await readVoyageDrPlotFixes(voyagePath, index);
   const snapshotEvidence = await readVoyageSnapshotEvidence(voyagePath);
+  const observations = await readVoyageObservations(voyagePath);
+  const routes = readVoyageRoutes(index);
   const gpsIntegrity = buildGpsIntegrityAnalysis([
     ...secondPass.gpsIntegritySamples,
     ...snapshotEvidence.gpsIntegritySamples,
@@ -688,9 +689,9 @@ async function analyseVoyage(
     gpsIntegrity,
     traffic,
     drTracks,
-    drPlotFixes,
     biteReports,
     replayVerification,
+    snapshotEvidenceErrors: snapshotEvidence.errors,
   });
 
   emitAnalysisProgress(onProgress, 95, "building-review", "Building voyage review");
@@ -709,7 +710,8 @@ async function analyseVoyage(
     hourlyMarkers: markers,
     track: thinTrack(track, maxTrackPoints),
     drTracks,
-    drPlotFixes,
+    observations,
+    routes,
     gpsIntegrity,
     originalTrackPoints: track.length,
   };
@@ -770,7 +772,6 @@ async function analyseRecording(
     gpsIntegrity,
     traffic,
     drTracks,
-    drPlotFixes: null,
     biteReports: [],
     replayVerification: null,
   });
@@ -877,21 +878,6 @@ async function readVoyageDrTracks(voyagePath, index, maxTrackPoints) {
       .map((line) => normalizeDrTrackSample(JSON.parse(line)))
       .filter(Boolean);
     return buildDrTracks(samples, maxTrackPoints, "bundle");
-  } catch {
-    return null;
-  }
-}
-
-async function readVoyageDrPlotFixes(voyagePath, index) {
-  const fileName = String(index?.drPlotFixes?.fileName || DR_PLOT_FIXES_RELATIVE_PATH);
-  try {
-    const text = await readZipEntryText(voyagePath, fileName);
-    const parsed = JSON.parse(text);
-    return {
-      source: "bundle",
-      fileName,
-      plotFixes: normalizeDrPlotFixes(parsed?.plotFixes || parsed?.fixes || []),
-    };
   } catch {
     return null;
   }
@@ -1374,12 +1360,17 @@ async function readVoyageSnapshotEvidence(voyagePath) {
     trafficAlertSamples: [],
     trafficTargets: [],
     trafficProjectionMetrics: emptyTrafficProjectionMetrics(),
+    errors: [],
   };
   for (const fileName of snapshotEntries) {
     let document;
     try {
       document = await readZipJson(voyagePath, fileName);
-    } catch {
+    } catch (error) {
+      evidence.errors.push({
+        fileName,
+        error: String(error?.message || error).slice(0, 300),
+      });
       continue;
     }
     const snapshot = document?.snapshot && typeof document.snapshot === "object"
@@ -1429,6 +1420,124 @@ async function readVoyageSnapshotEvidence(voyagePath) {
     }
   }
   return evidence;
+}
+
+async function readVoyageObservations(voyagePath) {
+  let text;
+  try {
+    text = await readZipEntryText(voyagePath, OBSERVATIONS_RELATIVE_PATH);
+  } catch {
+    return [];
+  }
+  const observations = [];
+  for (const [index, line] of text.split(/\r?\n/).entries()) {
+    if (!line.trim()) continue;
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      observations.push({
+        id: `invalid-${index + 1}`,
+        recordedAt: null,
+        text: "Unreadable voyage note",
+        source: null,
+        position: null,
+        evidenceError: `Invalid JSON on line ${index + 1}`,
+      });
+      continue;
+    }
+    const evidenceFile = stringOrNull(record?.evidence?.fileName);
+    let position = null;
+    let evidenceError = stringOrNull(record?.evidenceError);
+    if (evidenceFile) {
+      try {
+        const document = await readZipJson(voyagePath, evidenceFile);
+        const snapshot = document?.snapshot && typeof document.snapshot === "object"
+          ? document.snapshot
+          : document;
+        position = normalizeObservationPosition(
+          snapshot?.self?.position || snapshot?.self?.navigation?.position,
+        );
+      } catch (error) {
+        evidenceError = evidenceError || String(error?.message || error).slice(0, 300);
+      }
+    }
+    observations.push({
+      id: stringOrNull(record?.id) || `note-${index + 1}`,
+      recordedAt: stringOrNull(record?.recordedAt),
+      replayOriginalAt: stringOrNull(record?.replayOriginalAt),
+      voyageElapsedSeconds: numberOrNull(record?.voyageElapsedSeconds),
+      text: String(record?.text || "").trim().slice(0, 2000),
+      source: stringOrNull(record?.source),
+      position,
+      evidenceError,
+    });
+  }
+  return observations.sort((left, right) =>
+    (Date.parse(left.recordedAt || "") || 0) - (Date.parse(right.recordedAt || "") || 0),
+  );
+}
+
+function normalizeObservationPosition(value) {
+  const latitude = numberOrNull(value?.latitude);
+  const longitude = numberOrNull(value?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+  return { lat: latitude, lon: longitude };
+}
+
+function readVoyageRoutes(index = {}) {
+  const records = [];
+  if (index.routeAtStart) {
+    records.push({ at: index.startedAt || null, action: "active-at-start", selection: index.routeAtStart });
+  }
+  for (const record of Array.isArray(index.routeSelections) ? index.routeSelections : []) {
+    if (record?.action === "active-at-start" && records.length) continue;
+    records.push(record);
+  }
+  return records
+    .map((record, sequence) => normalizeVoyageRoute(record, sequence))
+    .filter(Boolean);
+}
+
+function normalizeVoyageRoute(record, sequence) {
+  const selection = record?.selection;
+  if (!selection && record?.action === "closed") {
+    return {
+      sequence,
+      at: stringOrNull(record?.at),
+      action: "closed",
+      name: "Route closed",
+      reversed: false,
+      closed: true,
+      points: [],
+    };
+  }
+  const coordinates = selection?.resource?.feature?.geometry?.coordinates;
+  if (
+    selection?.contract !== "ajrm-marine-display-active-route-v1" ||
+    selection?.resource?.feature?.geometry?.type !== "LineString" ||
+    !Array.isArray(coordinates)
+  ) return null;
+  const points = coordinates
+    .map((point) => ({ lon: Number(point?.[0]), lat: Number(point?.[1]) }))
+    .filter((point) =>
+      Number.isFinite(point.lat) && Number.isFinite(point.lon) &&
+      point.lat >= -90 && point.lat <= 90 && point.lon >= -180 && point.lon <= 180,
+    );
+  if (points.length < 2) return null;
+  return {
+    sequence,
+    at: stringOrNull(record?.at),
+    action: stringOrNull(record?.action) || "opened",
+    name:
+      stringOrNull(selection?.resource?.name) ||
+      stringOrNull(selection?.resourceId) ||
+      "Unnamed route",
+    reversed: selection?.reversed === true,
+    closed: false,
+    points,
+  };
 }
 
 function normalizeSnapshotTrafficTarget(target, timestamp) {
@@ -1678,69 +1787,6 @@ function booleanOrNull(value) {
   return typeof value === "boolean" ? value : null;
 }
 
-function normalizeDrPlotFixes(value) {
-  return (Array.isArray(value) ? value : [])
-    .map(normalizeDrPlotFix)
-    .filter(Boolean)
-    .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
-}
-
-function normalizeDrPlotFix(value) {
-  const source = value?.position || {};
-  const lat = numberOrNull(source.lat ?? source.latitude);
-  const lon = numberOrNull(source.lon ?? source.longitude);
-  const timestampMs = Date.parse(value?.timestamp);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(timestampMs)) return null;
-  return {
-    id: typeof value.id === "string" && value.id.trim() ? value.id.trim().slice(0, 80) : `plot-${new Date(timestampMs).toISOString()}`,
-    timestamp: new Date(timestampMs).toISOString(),
-    lat,
-    lon,
-    automatic: value.automatic === true,
-    plotType: ["manual", "timed", "gps-lost", "gps-return", "observed-fix"].includes(value.plotType) ? value.plotType : null,
-    note: stringOrNull(value.note),
-    trust: stringOrNull(value.trust),
-    drSource: stringOrNull(value.drSource),
-    uncertaintyRadiusMeters: numberOrNull(value.uncertaintyRadiusMeters),
-    drGpsDependent: booleanOrNull(value.drGpsDependent),
-    drLeewayStatus: stringOrNull(value.drLeewayStatus),
-    drCurrentOrigin: stringOrNull(value.drCurrentOrigin),
-    drHeadingSource: stringOrNull(value.drHeadingSource),
-    drTrackThroughWaterSource: stringOrNull(value.drTrackThroughWaterSource),
-    drSpeedThroughWaterSource: stringOrNull(value.drSpeedThroughWaterSource),
-    drCurrentSource: stringOrNull(value.drCurrentSource),
-    drLeewaySource: stringOrNull(value.drLeewaySource),
-    integritySource: stringOrNull(value.integritySource),
-    integrityAssurance: stringOrNull(value.integrityAssurance),
-    integrityComparisonAvailable: booleanOrNull(value.integrityComparisonAvailable),
-    integrityUnavailableReason: longStringOrNull(value.integrityUnavailableReason),
-    integrityAgeSeconds: numberOrNull(value.integrityAgeSeconds),
-    integrityUncertaintyRadiusMeters: numberOrNull(value.integrityUncertaintyRadiusMeters),
-    integrityGpsDependent: booleanOrNull(value.integrityGpsDependent),
-    integrityLeewayStatus: stringOrNull(value.integrityLeewayStatus),
-    integrityCurrentOrigin: stringOrNull(value.integrityCurrentOrigin),
-    integrityHeadingSource: stringOrNull(value.integrityHeadingSource),
-    integrityTrackThroughWaterSource: stringOrNull(value.integrityTrackThroughWaterSource),
-    integritySpeedThroughWaterSource: stringOrNull(value.integritySpeedThroughWaterSource),
-    integrityCurrentSource: stringOrNull(value.integrityCurrentSource),
-    integrityLeewaySource: stringOrNull(value.integrityLeewaySource),
-    referenceKind: stringOrNull(value.referenceKind),
-    referenceSource: stringOrNull(value.referenceSource),
-    referenceMethod: stringOrNull(value.referenceMethod),
-    referenceAgeSeconds: numberOrNull(value.referenceAgeSeconds),
-    referenceUncertaintyDegrees: numberOrNull(value.referenceUncertaintyDegrees),
-    referenceGpsDependent: booleanOrNull(value.referenceGpsDependent),
-    lastTrustedFixAgeSeconds: numberOrNull(value.lastTrustedFixAgeSeconds),
-    distanceFromLastTrustedFixMeters: numberOrNull(value.distanceFromLastTrustedFixMeters),
-    stwMps: numberOrNull(value.stwMps),
-    headingTrueDegrees: numberOrNull(value.headingTrueDegrees),
-    sogMps: numberOrNull(value.sogMps),
-    cogTrueDegrees: numberOrNull(value.cogTrueDegrees),
-    currentDriftMps: numberOrNull(value.currentDriftMps),
-    currentSetTrueDegrees: numberOrNull(value.currentSetTrueDegrees),
-  };
-}
-
 function stringOrNull(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
@@ -1880,7 +1926,9 @@ function preferredVoyageTrack(rawTrack, drTracks) {
   return rawTrack;
 }
 
-function chooseOwnContext(positionCounts) {
+function chooseOwnContext(positionCounts, preferredContext = null) {
+  const preferred = String(preferredContext || "").trim();
+  if (preferred && positionCounts.has(preferred)) return preferred;
   if (positionCounts.has("vessels.self")) return "vessels.self";
   let selected = null;
   let selectedCount = 0;
@@ -2403,9 +2451,9 @@ function buildVoyageReview({
   gpsIntegrity,
   traffic,
   drTracks,
-  drPlotFixes,
   biteReports = [],
   replayVerification = null,
+  snapshotEvidenceErrors = [],
 }) {
   const findings = [];
   const paragraphs = [];
@@ -2416,7 +2464,7 @@ function buildVoyageReview({
   const comment = index.comment ? ` "${index.comment}"` : "";
 
   paragraphs.push(
-    `Voyage${comment} covered ${distance} over ${duration}. The track contains ${summary.trackPoints || 0} own-vessel GPS positions, with an average speed of ${formatReviewNumber(summary.averageSpeedKnots, 1, " knots")}.`,
+    `Voyage${comment} covered ${distance} over ${duration}. The track contains ${summary.trackPoints || 0} own-vessel navigation positions, with an average speed of ${formatReviewNumber(summary.averageSpeedKnots, 1, " knots")}.`,
   );
   addRecomputedReplayReview(
     findings,
@@ -2427,13 +2475,6 @@ function buildVoyageReview({
 
   if (summary.minDepthMeters != null) {
     paragraphs.push(`Minimum recorded depth was ${formatReviewNumber(summary.minDepthMeters, 1, " meters")}. Maximum recorded SOG was ${formatReviewNumber(summary.maxSogKnots, 1, " knots")}.`);
-  } else {
-    findings.push({
-      category: "voyage",
-      level: "amber",
-      title: "No depth samples found",
-      detail: "The voyage bundle did not include usable depth samples for this review.",
-    });
   }
 
   if (traffic?.available) {
@@ -2527,7 +2568,15 @@ function buildVoyageReview({
     });
   }
 
-  addDrReviewFindings(findings, drTracks, drPlotFixes, gps);
+  addDrReviewFindings(findings, drTracks, gps);
+  if (snapshotEvidenceErrors.length) {
+    findings.push({
+      category: "voyage",
+      level: "amber",
+      title: "Snapshot evidence unreadable",
+      detail: `${snapshotEvidenceErrors.length} captured snapshot evidence file${snapshotEvidenceErrors.length === 1 ? " was" : "s were"} unreadable. Other voyage evidence was still reviewed.`,
+    });
+  }
   if (!summary.trackPoints) {
     findings.push({
       category: "voyage",
@@ -2556,7 +2605,6 @@ function buildVoyageReview({
     summary,
     gps,
     traffic,
-    drPlotFixes,
     replayVerification,
   });
   const conclusion = reviewConclusion({ status, softwareStatus, voyageStatus, softwareFindings, voyageFindings });
@@ -2581,7 +2629,6 @@ function buildReviewHighlights({
   summary,
   gps,
   traffic,
-  drPlotFixes,
   replayVerification = null,
 }) {
   const highlights = [
@@ -2617,8 +2664,6 @@ function buildReviewHighlights({
   } else {
     highlights.push(reviewHighlight("GPS Integrity", "not recorded", "amber"));
   }
-  const fixCount = (drPlotFixes?.plotFixes || []).length;
-  highlights.push(reviewHighlight("DR fixes", fixCount ? String(fixCount) : "none recorded", "green"));
   if (index.interruptedByRestart || /restart/i.test(String(index.stopReason || ""))) {
     highlights.push(reviewHighlight("Recording", "recovered after restart", "green"));
   } else if (index.stopReason) {
@@ -3074,9 +3119,8 @@ function addGpsReviewFindings(findings, gps) {
   }
 }
 
-function addDrReviewFindings(findings, drTracks, drPlotFixes, gps = {}) {
+function addDrReviewFindings(findings, drTracks, gps = {}) {
   const jumps = drTracks?.recoveryJumps || [];
-  const fixCount = (drPlotFixes?.plotFixes || []).length;
   if (jumps.length) {
     const maxJump = jumps.reduce((max, jump) => Math.max(max, Number(jump.meters) || 0), 0);
     findings.push({
@@ -3084,14 +3128,6 @@ function addDrReviewFindings(findings, drTracks, drPlotFixes, gps = {}) {
       level: maxJump > 500 ? "red" : "amber",
       title: "DR recovery jump",
       detail: `${jumps.length} GPS recovery jump${jumps.length === 1 ? "" : "s"} were recorded. Largest jump was ${formatReviewNumber(maxJump, 0, " meters")}.`,
-    });
-  }
-  if (fixCount) {
-    findings.push({
-      category: "voyage",
-      level: "green",
-      title: "DR plot fixes available",
-      detail: `${fixCount} DR/GPS plot fix${fixCount === 1 ? "" : "es"} were bundled for chart review.`,
     });
   }
 }
@@ -3640,7 +3676,6 @@ module.exports._private = {
   hourlyMarkers,
   listVoyages,
   legacyPlotCachePath,
-  normalizeDrPlotFixes,
   plotCachePath,
   thinTrack,
   trackDistanceNm,

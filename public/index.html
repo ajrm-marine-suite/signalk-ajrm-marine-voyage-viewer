@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>AJRM Marine Voyage Viewer</title>
     <link rel="stylesheet" href="./leaflet.css">
-    <link rel="stylesheet" href="./styles.css?v=0.6.8">
+    <link rel="stylesheet" href="./styles.css?v=0.6.9">
   </head>
   <body>
     <div id="map" class="map" aria-label="Voyage chart"></div>
@@ -48,7 +48,6 @@
         <button id="reviewSelected" type="button" disabled>Review</button>
         <button id="centrePlot" type="button" disabled>Centre plot</button>
         <button id="toggleDrTrack" type="button" disabled aria-pressed="false">DR Track</button>
-        <button id="toggleDrFixes" type="button" disabled aria-pressed="false">DR Fixes</button>
         <a id="downloadGpx" class="download-link disabled" href="#" download aria-disabled="true">Export GPX</a>
         <a id="downloadSelected" class="download-link disabled" href="#" download aria-disabled="true">Download</a>
       </div>
@@ -107,6 +106,10 @@
         </div>
       </div>
       <div id="summaryGrid" class="summary-grid"></div>
+      <section id="notesPanel" class="voyage-notes" hidden>
+        <h3>Voyage notes</h3>
+        <div id="notesList" class="voyage-notes-list"></div>
+      </section>
       <div id="reviewPanel" class="review-panel" hidden></div>
       <p id="comment" class="comment"></p>
     </section>
@@ -114,6 +117,6 @@
     <div id="toast" class="toast" role="status"></div>
     <script src="./leaflet.js"></script>
     <script src="./protomaps-leaflet.js"></script>
-    <script src="./app.js?v=0.6.8"></script>
+    <script src="./app.js?v=0.6.9"></script>
   </body>
 </html>

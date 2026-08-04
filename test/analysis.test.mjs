@@ -84,6 +84,17 @@ test("falls back to the context with most samples when vessels.self is absent", 
   assert.equal(_private.chooseOwnContext(counts), "vessels.target.high");
 });
 
+test("prefers the explicit Capture own-vessel context", () => {
+  const counts = new Map([
+    ["vessels.urn:mrn:imo:mmsi:235008635", 2],
+    ["vessels.urn:mrn:imo:mmsi:999999999", 20],
+  ]);
+  assert.equal(
+    _private.chooseOwnContext(counts, "vessels.urn:mrn:imo:mmsi:235008635"),
+    "vessels.urn:mrn:imo:mmsi:235008635",
+  );
+});
+
 test("hourly markers use nearest track point", () => {
   const markers = _private.hourlyMarkers([
     { lat: 56.0, lon: -5.0, ts: "2026-06-22T12:30:00.000Z" },
@@ -892,7 +903,7 @@ test("builds English voyage review with separate software and voyage-data lights
   });
 
   assert.equal(analysis.review.softwareStatus, "red");
-  assert.equal(analysis.review.voyageStatus, "amber");
+  assert.equal(analysis.review.voyageStatus, "green");
   assert.equal(analysis.review.bite.failed, 1);
   assert.equal(analysis.traffic.vesselsEncountered, 2);
   assert.equal(analysis.traffic.bySize.medium, 1);
@@ -905,7 +916,7 @@ test("builds English voyage review with separate software and voyage-data lights
   assert.equal(analysis.traffic.projection.maxMeasurementAgeSeconds, 42);
   assert.equal(analysis.traffic.projection.maxProjectionSeconds, 50);
   assert.equal(analysis.traffic.projection.maxAnnouncementLeadSeconds, 8);
-  assert.match(analysis.review.headline, /Software RED, voyage data AMBER/);
+  assert.match(analysis.review.headline, /Software RED, voyage data GREEN/);
   assert.match(analysis.review.headline, /software: Built-in test failure/);
   assert.doesNotMatch(analysis.review.headline, /Collision alerts recorded/);
   assert.ok(analysis.review.conclusion.includes("Software checks failed"));
@@ -1221,56 +1232,26 @@ test("analyses bundled DR track overlay samples", async () => {
   assert.ok(analysis.drTracks.recoveryJumps[0].meters > 400);
 });
 
-test("analyses bundled DR plot fixes", async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-dr-fixes-"));
-  const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-dr-fixes-bundle-"));
+test("analyses multiple voyage notes and captured routes", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-notes-"));
+  const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-notes-bundle-"));
   const logFile = path.join(dir, "capture-2026-06-22T120000Z.jsonl");
   const records = [
     captureRecord("2026-06-22T12:00:00.000Z", 56.0, -5.0, 2),
     captureRecord("2026-06-22T12:10:00.000Z", 56.00833, -5.0, 3),
   ];
   await fs.writeFile(logFile, records.map((record) => JSON.stringify(record)).join("\n"));
-  await fs.mkdir(path.join(bundleDir, "tracks"), { recursive: true });
+  await fs.mkdir(path.join(bundleDir, "observations", "evidence"), { recursive: true });
   await fs.writeFile(
-    path.join(bundleDir, "tracks", "dr-plot-fixes.json"),
-    JSON.stringify({
-      schemaVersion: 1,
-      plotFixes: [
-        {
-          id: "fix-one",
-          timestamp: "2026-06-22T12:05:00.000Z",
-          automatic: true,
-          plotType: "gps-lost",
-          position: { latitude: 56.004, longitude: -5.001 },
-          trust: "lost",
-          drSource: "heading-stw-current",
-          uncertaintyRadiusMeters: null,
-          drGpsDependent: false,
-          drLeewayStatus: "unknown",
-          drCurrentOrigin: "independent-current",
-          drHeadingSource: "YDEN.4",
-          drSpeedThroughWaterSource: "YDEN.44",
-          drCurrentSource: "tidal-provider",
-          integritySource: "heading-stw",
-          integrityAssurance: "reduced",
-          integrityComparisonAvailable: false,
-          integrityUnavailableReason: "Independent leeway evidence is unavailable.",
-          integrityGpsDependent: false,
-          integrityLeewayStatus: "unknown",
-          integrityCurrentOrigin: null,
-          integrityHeadingSource: "YDEN.4",
-          referenceKind: "heading",
-          referenceSource: "YDEN.4",
-          referenceMethod: "magnetic-heading-plus-wmm",
-          referenceAgeSeconds: 0,
-          referenceUncertaintyDegrees: 5,
-          referenceGpsDependent: false,
-          stwMps: 1.5,
-          headingTrueDegrees: 90,
-          currentDriftMps: 0,
-        },
-      ],
-    }),
+    path.join(bundleDir, "observations", "evidence", "note-one.json"),
+    JSON.stringify({ snapshot: { self: { position: { latitude: 56.004, longitude: -5.001 } } } }),
+  );
+  await fs.writeFile(
+    path.join(bundleDir, "observations", "observations.jsonl"),
+    [
+      { id: "one", recordedAt: "2026-06-22T12:05:00.000Z", text: "First note", evidence: { fileName: "observations/evidence/note-one.json" } },
+      { id: "two", recordedAt: "2026-06-22T12:06:00.000Z", text: "Second note" },
+    ].map(JSON.stringify).join("\n"),
   );
   await fs.writeFile(
     path.join(bundleDir, "index.json"),
@@ -1280,30 +1261,33 @@ test("analyses bundled DR plot fixes", async () => {
       stoppedAt: "2026-06-22T12:10:00.000Z",
       captureFiles: [],
       captureReferences: [{ fileName: path.basename(logFile), sourcePath: logFile }],
-      drPlotFixes: { fileName: "tracks/dr-plot-fixes.json" },
+      ownContext: "vessels.self",
+      routeAtStart: {
+        contract: "ajrm-marine-display-active-route-v1",
+        resourceId: "route-one",
+        resource: {
+          name: "Test route",
+          feature: { type: "Feature", geometry: { type: "LineString", coordinates: [[-5, 56], [-5.1, 56.1]] } },
+        },
+      },
     }),
   );
   const zipPath = path.join(dir, "voyage-20260622T120000Z.zip");
-  await writeZip(zipPath, bundleDir, ["index.json", "tracks/dr-plot-fixes.json"]);
+  await writeZip(zipPath, bundleDir, [
+    "index.json",
+    "observations/observations.jsonl",
+    "observations/evidence/note-one.json",
+  ]);
 
   const analysis = await _private.analyseVoyage(zipPath, {
     maxTrackPoints: 100,
     options: { logDirectory: dir },
   });
-  assert.equal(analysis.drPlotFixes.source, "bundle");
-  assert.equal(analysis.drPlotFixes.plotFixes.length, 1);
-  assert.equal(analysis.drPlotFixes.plotFixes[0].id, "fix-one");
-  assert.equal(analysis.drPlotFixes.plotFixes[0].lat, 56.004);
-  assert.equal(analysis.drPlotFixes.plotFixes[0].plotType, "gps-lost");
-  assert.equal(analysis.drPlotFixes.plotFixes[0].uncertaintyRadiusMeters, null);
-  assert.equal(analysis.drPlotFixes.plotFixes[0].currentDriftMps, 0);
-  assert.equal(analysis.drPlotFixes.plotFixes[0].drGpsDependent, false);
-  assert.equal(
-    analysis.drPlotFixes.plotFixes[0].integrityComparisonAvailable,
-    false,
-  );
-  assert.equal(analysis.drPlotFixes.plotFixes[0].referenceAgeSeconds, 0);
-  assert.equal(analysis.drPlotFixes.plotFixes[0].referenceSource, "YDEN.4");
+  assert.deepEqual(analysis.observations.map((note) => note.text), ["First note", "Second note"]);
+  assert.deepEqual(analysis.observations[0].position, { lat: 56.004, lon: -5.001 });
+  assert.equal(analysis.routes.length, 1);
+  assert.equal(analysis.routes[0].name, "Test route");
+  assert.equal(analysis.routes[0].points.length, 2);
 });
 
 test("analyses raw AJRM Marine Logger jsonl recordings", async () => {
@@ -1449,12 +1433,13 @@ test("accepts legacy plot cache sidecars", async () => {
   assert.equal(second.summary.trackPoints, 2);
 });
 
-test("web app exposes DR plot-fix overlay controls", async () => {
+test("web app exposes voyage notes and route review without retired Plotter controls", async () => {
   const html = await fs.readFile(path.join(process.cwd(), "public", "index.html"), "utf8");
   const app = await fs.readFile(path.join(process.cwd(), "public", "app.js"), "utf8");
   const css = await fs.readFile(path.join(process.cwd(), "public", "styles.css"), "utf8");
 
-  assert.match(html, /id="toggleDrFixes"/);
+  assert.doesNotMatch(html, /id="toggleDrFixes"/);
+  assert.match(html, /id="notesPanel"/);
   assert.match(html, /id="reviewSelected"/);
   assert.doesNotMatch(html, />Clips</);
   assert.doesNotMatch(html, />Logs</);
@@ -1463,7 +1448,9 @@ test("web app exposes DR plot-fix overlay controls", async () => {
   assert.doesNotMatch(app, /fileTabs/);
   assert.doesNotMatch(app, /updateFileTabs/);
   assert.match(html, /id="reviewPanel"/);
-  assert.match(app, /function renderDrPlotFixes/);
+  assert.doesNotMatch(app, /function renderDrPlotFixes/);
+  assert.match(app, /function renderVoyageNotes/);
+  assert.match(app, /function renderVoyageRoutes/);
   assert.match(app, /function renderReview/);
   assert.match(app, /review-conclusion/);
   assert.match(app, /review-highlights/);
@@ -1474,13 +1461,6 @@ test("web app exposes DR plot-fix overlay controls", async () => {
   assert.match(css, /\.review-highlight/);
   assert.match(app, /showSummary: false/);
   assert.match(app, /Track plotted\. Press Review/);
-  assert.match(app, /className: `plot-fix-symbol-marker/);
-  assert.match(app, /className: "plot-fix-label-marker"/);
-  assert.match(app, /iconSize: \[28, 28\]/);
-  assert.match(app, /iconAnchor: \[14, 14\]/);
-  assert.match(app, /popupRow\("DR GPS dependence"/);
-  assert.match(app, /popupRow\("Integrity comparison"/);
-  assert.match(app, /popupRow\("Navigation reference"/);
   assert.match(app, /\["DR evidence", drEvidenceSummary/);
   assert.match(app, /\["Integrity comparison", integrityAssuranceSummary/);
   assert.match(app, /\["Pilot helm bias", formatRudderSummary/);
@@ -1488,8 +1468,7 @@ test("web app exposes DR plot-fix overlay controls", async () => {
   assert.match(app, /function formatRudderSummary/);
   assert.match(app, /function formatWaterTemperatureSummary/);
   assert.match(app, /if \(value === false\) return "GPS-independent"/);
-  assert.match(app, /if \(fix\.plotType === "gps-return"\) return "GPS fix"/);
-  assert.match(css, /\.plot-fix-symbol-marker\.estimated-position \.plot-fix-symbol/);
+  assert.match(css, /\.voyage-note-marker/);
 });
 
 function captureRecord(timestamp, latitude, longitude, sogKnots, instruments = {}) {

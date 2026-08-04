@@ -20,7 +20,7 @@ Integrity process counters are differenced between snapshots so the summary
 describes the voyage rather than the lifetime of the running plugin.
 
 Current builds preserve the navigation evidence carried by Capture's compact
-`tracks/dr-track.jsonl` and copied DR Plotter fixes: integrity assurance,
+`tracks/dr-track.jsonl`: integrity assurance,
 explicit comparison availability, GPS-dependence, leeway/current origin, input
 sources, and the accepted Navigation Reference clock source. Voyage Viewer
 renders those provider decisions without selecting sensor sources or
@@ -55,10 +55,11 @@ CPA/TCPA calculation.
 Version `0.5.3` doubles the main plotted voyage track line thickness for easier
 viewing.
 
-Version `0.5.7` adds a **DR Fixes** overlay for voyage bundles that contain
-`tracks/dr-plot-fixes.json`. The overlay shows archived timed, manual, and
-GPS-lost navigator plot fixes with the same square/triangle symbols and popup
-details used by AJRM Marine DR Plotter.
+Voyage notes are shown as a chronological list below the summary. Notes with
+captured Snapshot position evidence are numbered on the chart; selecting the
+note centres the chart on that position. The voyage-level comment remains a
+separate summary field. Captured route selections are plotted as blue dashed
+lines and the latest route state is named in the summary.
 
 Version `0.5.13` summarises captured AJRM Marine GPS Integrity state in the
 voyage Summary. This helps review a day's sailing without live diagnostics:
@@ -71,8 +72,8 @@ Version `0.1.17` adds a **DR Track** overlay for voyage bundles that contain
 operational dead-reckoning track, independent DR where relevant, and highlighted
 GPS recovery jumps.
 
-Version `0.1.16` refreshes Auto Charts using the same direct Signal K resource
-fallback as DR Plotter and uses voyage duration to show steadier progress while
+Version `0.1.16` refreshes Auto Charts using Signal K chart resources directly
+and uses voyage duration to show steadier progress while
 long captures are scanned.
 
 Version `0.1.15` added support for old reference-mode voyage bundles by reading
@@ -138,6 +139,8 @@ elsewhere.
   steering system bias, and points of sail can all affect it.
 - Average, minimum, and maximum sea-water temperature when captured
 - Track point count and snapshot count
+- Chronological voyage notes, including recorded chart positions when present
+- Captured route name, reversal state, and route-selection history
 - GPS Integrity summary when captured: final trust state, evaluations, GPS
   outages, rejected fixes, position jumps, weak-signal events, GPS/DR mismatch
   count, maximum DR uncertainty, integrity assurance/comparison availability,
@@ -147,9 +150,6 @@ An unavailable independent DR comparison is disclosed as provenance but does
 not by itself make a voyage amber. Likewise, a stale Traffic position that was
 safely withheld is healthy behaviour; an announcement explicitly recorded as
 using an over-age observation remains a caution.
-
-DR Fix popups show the same explicit evidence copied from DR Plotter. Missing
-numeric evidence is displayed as unavailable, while a real zero remains zero.
 
 ## Notes
 

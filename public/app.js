@@ -18,7 +18,8 @@ const elements = {
   reviewSelected: document.querySelector("#reviewSelected"),
   centrePlot: document.querySelector("#centrePlot"),
   toggleDrTrack: document.querySelector("#toggleDrTrack"),
-  toggleDrFixes: document.querySelector("#toggleDrFixes"),
+  notesPanel: document.querySelector("#notesPanel"),
+  notesList: document.querySelector("#notesList"),
   plotProgress: document.querySelector("#plotProgress"),
   progressText: document.querySelector("#progressText"),
   progressPercent: document.querySelector("#progressPercent"),
@@ -37,7 +38,7 @@ const elements = {
 let map;
 let trackLayer;
 let drTrackLayer;
-let drPlotFixLayer;
+let routeLayer;
 let markerLayer;
 let baseLayers = {};
 let currentBaseLayer;
@@ -58,7 +59,6 @@ let selectedFile = null;
 let plottedBounds = null;
 let currentAnalysis = null;
 let drTrackVisible = false;
-let drFixesVisible = false;
 let analysisRequestId = 0;
 
 function showToast(message, isError = false) {
@@ -125,7 +125,7 @@ function initMap() {
   );
   trackLayer = L.layerGroup().addTo(map);
   drTrackLayer = L.layerGroup().addTo(map);
-  drPlotFixLayer = L.layerGroup().addTo(map);
+  routeLayer = L.layerGroup().addTo(map);
   markerLayer = L.layerGroup().addTo(map);
   map.on("moveend zoomend", updateAutoChart);
   loadChartResources();
@@ -399,7 +399,6 @@ function keepChartLayersOnTop() {
   }
   trackLayer?.eachLayer((layer) => layer.bringToFront?.());
   drTrackLayer?.eachLayer((layer) => layer.bringToFront?.());
-  drPlotFixLayer?.eachLayer((layer) => layer.bringToFront?.());
   markerLayer?.eachLayer((layer) => layer.bringToFront?.());
 }
 
@@ -484,17 +483,15 @@ function showSelectedPlaceholder() {
   plottedBounds = null;
   currentAnalysis = null;
   drTrackVisible = false;
-  drFixesVisible = false;
   elements.centrePlot.disabled = true;
   elements.toggleDrTrack.disabled = true;
   elements.toggleDrTrack.setAttribute("aria-pressed", "false");
-  elements.toggleDrFixes.disabled = true;
-  elements.toggleDrFixes.setAttribute("aria-pressed", "false");
   elements.summaryTitle.textContent = selectedFile?.fileName || "Voyage summary";
   elements.summarySubtitle.textContent = selectedFile
     ? "Press Plot to draw the track, or Review for the voyage summary."
     : "";
   elements.summaryGrid.replaceChildren();
+  renderVoyageNotes([]);
   renderReview(null);
   elements.comment.textContent = "";
 }
@@ -502,7 +499,7 @@ function showSelectedPlaceholder() {
 function clearPlottedLayers() {
   trackLayer?.clearLayers();
   drTrackLayer?.clearLayers();
-  drPlotFixLayer?.clearLayers();
+  routeLayer?.clearLayers();
   markerLayer?.clearLayers();
 }
 
@@ -678,7 +675,7 @@ function renderAnalysis(analysis, { showSummary = true } = {}) {
   const track = analysis.track || [];
   trackLayer.clearLayers();
   drTrackLayer.clearLayers();
-  drPlotFixLayer.clearLayers();
+  routeLayer.clearLayers();
   markerLayer.clearLayers();
   plottedBounds = null;
   if (track.length > 1) {
@@ -695,10 +692,8 @@ function renderAnalysis(analysis, { showSummary = true } = {}) {
   elements.toggleDrTrack.disabled = !drTrackVisible;
   elements.toggleDrTrack.setAttribute("aria-pressed", String(drTrackVisible));
   renderDrTracks();
-  drFixesVisible = Boolean(hasDrPlotFixes(analysis.drPlotFixes));
-  elements.toggleDrFixes.disabled = !drFixesVisible;
-  elements.toggleDrFixes.setAttribute("aria-pressed", String(drFixesVisible));
-  renderDrPlotFixes();
+  renderVoyageRoutes(analysis.routes || []);
+  renderVoyageNoteMarkers(analysis.observations || []);
   elements.centrePlot.disabled = !plottedBounds;
   for (const marker of analysis.hourlyMarkers || []) {
     L.marker([marker.lat, marker.lon], {
@@ -730,10 +725,6 @@ function hasDrTracks(drTracks) {
   );
 }
 
-function hasDrPlotFixes(drPlotFixes) {
-  return (drPlotFixes?.plotFixes || []).length > 0;
-}
-
 function renderDrTracks() {
   drTrackLayer.clearLayers();
   const drTracks = currentAnalysis?.drTracks;
@@ -763,132 +754,39 @@ function renderDrTracks() {
   keepChartLayersOnTop();
 }
 
-function renderDrPlotFixes() {
-  drPlotFixLayer.clearLayers();
-  const fixes = currentAnalysis?.drPlotFixes?.plotFixes || [];
-  if (!drFixesVisible || !fixes.length) return;
-  for (const fix of fixes) {
-    if (!Number.isFinite(fix.lat) || !Number.isFinite(fix.lon)) continue;
-    const latlng = [fix.lat, fix.lon];
-    const marker = L.marker(latlng, {
-      icon: L.divIcon({
-        className: `plot-fix-symbol-marker ${plotFixMarkerClass(fix)}`,
-        html: `<span class="plot-fix-symbol"></span>`,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14],
-        popupAnchor: [0, -18],
-      }),
-    });
-    marker.bindPopup(plotFixPopupHtml(fix), { maxWidth: 320 });
-    marker.addTo(drPlotFixLayer);
-    L.marker(latlng, {
-      interactive: false,
-      keyboard: false,
-      icon: L.divIcon({
-        className: "plot-fix-label-marker",
-        html: `<span class="plot-fix-time">${escapeHtml(formatTime(fix.timestamp))}</span>`,
-        iconSize: [74, 24],
-        iconAnchor: [37, 38],
-      }),
-    }).addTo(drPlotFixLayer);
+function renderVoyageRoutes(routes) {
+  routeLayer.clearLayers();
+  for (const [index, route] of routes.entries()) {
+    const points = (route.points || []).filter(
+      (point) => Number.isFinite(point.lat) && Number.isFinite(point.lon),
+    );
+    if (points.length < 2) continue;
+    const line = L.polyline(points.map((point) => [point.lat, point.lon]), {
+      color: "#2563eb",
+      weight: index === routes.length - 1 ? 5 : 3,
+      opacity: index === routes.length - 1 ? 0.8 : 0.35,
+      dashArray: "12 8",
+    }).bindTooltip(`${route.name}${route.reversed ? " (reversed)" : ""}`);
+    line.addTo(routeLayer);
+    const bounds = line.getBounds();
+    plottedBounds = plottedBounds?.isValid?.() ? plottedBounds.extend(bounds) : bounds;
   }
-  keepChartLayersOnTop();
 }
 
-function plotFixMarkerClass(fix) {
-  const classes = [fix.plotType || (fix.automatic ? "timed" : "manual")];
-  if (fix.plotType === "observed-fix") {
-    classes.push("observed-fix");
-  } else {
-    classes.push(fix.trust === "lost" || fix.plotType === "gps-lost" ? "estimated-position" : "electronic-fix");
+function renderVoyageNoteMarkers(observations) {
+  for (const [index, note] of observations.entries()) {
+    if (!Number.isFinite(note.position?.lat) || !Number.isFinite(note.position?.lon)) continue;
+    L.marker([note.position.lat, note.position.lon], {
+      icon: L.divIcon({
+        className: "voyage-note-marker",
+        html: `<span>${index + 1}</span>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13],
+      }),
+    })
+      .bindPopup(`<strong>Voyage note ${index + 1}</strong><br>${escapeHtml(note.text)}<br><small>${escapeHtml(formatDateTime(note.recordedAt))}</small>`)
+      .addTo(markerLayer);
   }
-  return classes.join(" ");
-}
-
-function plotFixPopupHtml(fix) {
-  return `
-    <div class="plot-popup">
-      <h3>${escapeHtml(plotFixTitle(fix))} ${escapeHtml(formatTime(fix.timestamp))}</h3>
-      <dl>
-        ${popupRow("Position", formatPosition(fix))}
-        ${fix.note ? popupRow("Note", fix.note) : ""}
-        ${popupRow("GPS status", fix.trust ? fix.trust.toUpperCase() : "n/a")}
-        ${popupRow("DR source", fix.drSource || "n/a")}
-        ${popupRow("DR GPS dependence", formatGpsDependence(fix.drGpsDependent))}
-        ${popupRow("DR leeway / current", formatLeewayAndCurrent(fix.drLeewayStatus, fix.drCurrentOrigin))}
-        ${popupRow("DR input sources", formatFixInputSources(fix, "dr"))}
-        ${popupRow("Uncertainty", formatMeters(fix.uncertaintyRadiusMeters))}
-        ${popupRow("Integrity comparison", formatIntegrityComparison(fix))}
-        ${fix.integrityUnavailableReason ? popupRow("Integrity reason", fix.integrityUnavailableReason) : ""}
-        ${popupRow("Integrity source", fix.integritySource || "n/a")}
-        ${popupRow("Integrity GPS dependence", formatGpsDependence(fix.integrityGpsDependent))}
-        ${popupRow("Integrity leeway / current", formatLeewayAndCurrent(fix.integrityLeewayStatus, fix.integrityCurrentOrigin))}
-        ${popupRow("Integrity inputs", formatFixInputSources(fix, "integrity"))}
-        ${popupRow("Navigation reference", formatFixNavigationReference(fix))}
-        ${popupRow("Last trusted GPS", formatAge(fix.lastTrustedFixAgeSeconds))}
-        ${popupRow("DR distance since GPS", formatDistance(fix.distanceFromLastTrustedFixMeters))}
-        ${popupRow("STW / heading", `${formatKnotsFromMps(fix.stwMps)} / ${formatDegrees(fix.headingTrueDegrees)}`)}
-        ${popupRow("SOG / COG", `${formatKnotsFromMps(fix.sogMps)} / ${formatDegrees(fix.cogTrueDegrees)}`)}
-        ${popupRow("Tide set / drift", `${formatDegrees(fix.currentSetTrueDegrees)} / ${formatKnotsFromMps(fix.currentDriftMps)}`)}
-      </dl>
-    </div>
-  `;
-}
-
-function plotFixTitle(fix) {
-  if (fix.trust === "lost" || fix.plotType === "gps-lost") return "Estimated position";
-  if (fix.plotType === "gps-return") return "GPS fix";
-  if (fix.plotType === "observed-fix") return "Observed fix";
-  if (fix.plotType === "timed" || fix.automatic) return "Timed plot fix";
-  return "Manual plot fix";
-}
-
-function formatGpsDependence(value, fallback = "n/a") {
-  if (value === true) return "GPS-dependent";
-  if (value === false) return "GPS-independent";
-  return fallback;
-}
-
-function formatLeewayAndCurrent(leewayStatus, currentOrigin) {
-  const parts = [];
-  if (leewayStatus) parts.push(`leeway ${leewayStatus}`);
-  if (currentOrigin) parts.push(`current ${currentOrigin}`);
-  return parts.join(" · ") || "n/a";
-}
-
-function formatFixInputSources(fix, prefix) {
-  const fieldPrefix = prefix === "integrity" ? "integrity" : "dr";
-  const inputs = [
-    ["heading", fix[`${fieldPrefix}HeadingSource`]],
-    ["track", fix[`${fieldPrefix}TrackThroughWaterSource`]],
-    ["STW", fix[`${fieldPrefix}SpeedThroughWaterSource`]],
-    ["current", fix[`${fieldPrefix}CurrentSource`]],
-    ["leeway", fix[`${fieldPrefix}LeewaySource`]],
-  ];
-  return inputs
-    .filter(([, source]) => source)
-    .map(([label, source]) => `${label} ${source}`)
-    .join(" · ") || "n/a";
-}
-
-function formatIntegrityComparison(fix) {
-  const parts = [];
-  if (fix.integrityComparisonAvailable === true) parts.push("Available");
-  if (fix.integrityComparisonAvailable === false) parts.push("Unavailable");
-  if (fix.integrityAssurance) parts.push(titleCase(fix.integrityAssurance));
-  return parts.join(" · ") || "not recorded";
-}
-
-function formatFixNavigationReference(fix) {
-  const parts = [];
-  if (fix.referenceKind) parts.push(titleCase(fix.referenceKind));
-  if (fix.referenceSource) parts.push(fix.referenceSource);
-  if (fix.referenceMethod) parts.push(fix.referenceMethod);
-  const dependency = formatGpsDependence(fix.referenceGpsDependent, "not recorded");
-  if (dependency !== "not recorded") parts.push(dependency);
-  const uncertainty = finiteNumberOrNull(fix.referenceUncertaintyDegrees);
-  if (uncertainty !== null) parts.push(`±${Math.abs(uncertainty).toFixed(1)} deg`);
-  return parts.join(" · ") || "n/a";
 }
 
 function addTrackLine(points, options) {
@@ -947,7 +845,8 @@ function renderSummary(analysis) {
     ["DR evidence", drEvidenceSummary(analysis.drTracks, gpsIntegrity)],
     ["Integrity comparison", integrityAssuranceSummary(analysis.drTracks, gpsIntegrity)],
     ["Navigation reference", navigationReferenceSummary(analysis.drTracks, gpsIntegrity)],
-    ["DR fixes", drPlotFixSummary(analysis.drPlotFixes)],
+    ["Route", voyageRouteSummary(analysis.routes)],
+    ["Notes", String((analysis.observations || []).length)],
     ["GPS integrity", gpsIntegritySummary(gpsIntegrity)],
     ["GPS outages", gpsOutageSummary(gpsIntegrity)],
     ["GPS rejected", gpsRejectedSummary(gpsIntegrity)],
@@ -974,6 +873,7 @@ function renderSummary(analysis) {
       return item;
     }),
   );
+  renderVoyageNotes(analysis.observations || []);
   renderReview(analysis.review);
 }
 
@@ -1211,11 +1111,49 @@ function navigationReferenceSummary(drTracks, gpsIntegrity) {
   return parts.join(" · ") || "—";
 }
 
-function drPlotFixSummary(drPlotFixes) {
-  const count = (drPlotFixes?.plotFixes || []).length;
-  if (!count) return "—";
-  const source = drPlotFixes.source === "bundle" ? "bundle" : "capture";
-  return `${count} fix${count === 1 ? "" : "es"} · ${source}`;
+function formatGpsDependence(value, fallback = "n/a") {
+  if (value === true) return "GPS-dependent";
+  if (value === false) return "GPS-independent";
+  return fallback;
+}
+
+function voyageRouteSummary(routes = []) {
+  if (!routes.length) return "none recorded";
+  const latest = routes[routes.length - 1];
+  if (latest.closed) return "closed before voyage end";
+  return `${latest.name}${latest.reversed ? " (reversed)" : ""}${routes.length > 1 ? ` · ${routes.length} states` : ""}`;
+}
+
+function renderVoyageNotes(observations) {
+  const notes = Array.isArray(observations) ? observations : [];
+  elements.notesPanel.hidden = notes.length === 0;
+  elements.notesList.replaceChildren();
+  for (const [index, note] of notes.entries()) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "voyage-note";
+    button.disabled = !Number.isFinite(note.position?.lat) || !Number.isFinite(note.position?.lon);
+    button.innerHTML = `
+      <span>${escapeHtml(formatDateTime(note.recordedAt))}</span>
+      <strong>${escapeHtml(note.text || "Untitled note")}</strong>
+      ${note.evidenceError ? `<small>Evidence: ${escapeHtml(note.evidenceError)}</small>` : ""}
+    `;
+    button.title = button.disabled
+      ? "This note has no recorded chart position"
+      : `Centre chart on note ${index + 1}`;
+    button.addEventListener("click", () => {
+      if (button.disabled) return;
+      map.setView([note.position.lat, note.position.lon], Math.max(map.getZoom(), 15));
+      for (const layer of markerLayer.getLayers()) {
+        const position = layer.getLatLng?.();
+        if (position && position.lat === note.position.lat && position.lng === note.position.lon) {
+          layer.openPopup?.();
+          break;
+        }
+      }
+    });
+    elements.notesList.append(button);
+  }
 }
 
 function gpxUrl(kind, fileName) {
@@ -1426,12 +1364,6 @@ elements.toggleDrTrack.addEventListener("click", () => {
   drTrackVisible = !drTrackVisible;
   elements.toggleDrTrack.setAttribute("aria-pressed", String(drTrackVisible));
   renderDrTracks();
-});
-elements.toggleDrFixes.addEventListener("click", () => {
-  if (!hasDrPlotFixes(currentAnalysis?.drPlotFixes)) return;
-  drFixesVisible = !drFixesVisible;
-  elements.toggleDrFixes.setAttribute("aria-pressed", String(drFixesVisible));
-  renderDrPlotFixes();
 });
 elements.toggleSummary.addEventListener("click", () => {
   const open = !elements.summaryPanel.classList.contains("open");
