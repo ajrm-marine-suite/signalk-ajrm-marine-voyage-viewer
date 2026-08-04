@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.10
+
+- Expose the existing voyage analysis engine through a read-only in-process API
+  so Console BITE can verify a completed Capture ZIP after finalisation.
+- Advertise the runtime analysis capability explicitly in Viewer status.
+
 ## 0.6.9
 
 - Show every recorded skipper note as a chronological Voyage notes list; notes

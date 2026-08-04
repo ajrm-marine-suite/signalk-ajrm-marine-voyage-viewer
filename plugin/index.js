@@ -31,6 +31,7 @@ const AJRM_MARINE_GPS_INTEGRITY_STATE_PATH = "plugins.ajrmMarineGpsIntegrity.nav
 const DR_TRACK_RELATIVE_PATH = "tracks/dr-track.jsonl";
 const OBSERVATIONS_RELATIVE_PATH = "observations/observations.jsonl";
 const AJRM_MARINE_CAPTURE_API_REGISTRY = Symbol.for("mcdonaldajr.ajrmMarineCaptureApi");
+const AJRM_MARINE_VOYAGE_VIEWER_API_REGISTRY = Symbol.for("mcdonaldajr.ajrmMarineVoyageViewerApi");
 const STATUS_PATH = "plugins.ajrmMarineVoyageViewer";
 
 module.exports = function ajrmMarineVoyageViewer(app) {
@@ -63,11 +64,29 @@ module.exports = function ajrmMarineVoyageViewer(app) {
 
   plugin.start = (pluginOptions = {}) => {
     options = normalizeOptions(pluginOptions);
+    const api = {
+      pluginId: plugin.id,
+      version: packageInfo.version,
+      status: () => statusPayload(),
+      async analyseVoyage(fileName) {
+        const file = safeVoyageFile(fileName);
+        return analyseFileSource("voyages", file, options, options.maxTrackPoints);
+      },
+    };
+    app.ajrmMarineVoyageViewerApi = api;
+    globalThis[AJRM_MARINE_VOYAGE_VIEWER_API_REGISTRY] = api;
     publishStatus();
     app.setPluginStatus(`Started v${packageInfo.version}`);
   };
 
-  plugin.stop = () => {};
+  plugin.stop = () => {
+    if (app.ajrmMarineVoyageViewerApi?.pluginId === plugin.id) {
+      delete app.ajrmMarineVoyageViewerApi;
+    }
+    if (globalThis[AJRM_MARINE_VOYAGE_VIEWER_API_REGISTRY]?.pluginId === plugin.id) {
+      delete globalThis[AJRM_MARINE_VOYAGE_VIEWER_API_REGISTRY];
+    }
+  };
 
   plugin.registerWithRouter = function registerWithRouter(router) {
     router.get("/status", (_req, res) => {
@@ -247,6 +266,7 @@ module.exports = function ajrmMarineVoyageViewer(app) {
         streamingDownload: true,
         streamingAnalysis: true,
         analysisProgress: true,
+        runtimeAnalysisApi: true,
       },
       review: {
         supported: true,

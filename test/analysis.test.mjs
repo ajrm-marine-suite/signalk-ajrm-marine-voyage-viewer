@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import AdmZip from "adm-zip";
-import {
+import createPlugin, {
   _private,
 } from "../plugin/index.js";
 
@@ -57,7 +57,25 @@ test("publishes suite-facing status and review capability", async () => {
   assert.match(source, /streamingDownload: true/);
   assert.match(source, /streamingAnalysis: true/);
   assert.match(source, /analysisProgress: true/);
+  assert.match(source, /runtimeAnalysisApi: true/);
+  assert.match(source, /app\.ajrmMarineVoyageViewerApi = api/);
+  assert.match(source, /async analyseVoyage\(fileName\)/);
+  assert.match(source, /analyseFileSource\("voyages", file, options, options\.maxTrackPoints\)/);
   assert.match(source, /engineVersion: REVIEW_ENGINE_VERSION/);
+});
+
+test("registers and removes the read-only runtime analysis API", () => {
+  const app = {
+    handleMessage() {},
+    setPluginStatus() {},
+  };
+  const plugin = createPlugin(app);
+  plugin.start({ voyageDirectory: path.join(os.tmpdir(), "ajrm-viewer-api-test") });
+  assert.equal(app.ajrmMarineVoyageViewerApi.pluginId, "signalk-ajrm-marine-voyage-viewer");
+  assert.equal(typeof app.ajrmMarineVoyageViewerApi.analyseVoyage, "function");
+  assert.equal(app.ajrmMarineVoyageViewerApi.status().capabilities.runtimeAnalysisApi, true);
+  plugin.stop();
+  assert.equal(app.ajrmMarineVoyageViewerApi, undefined);
 });
 
 test("track distance uses nautical miles", () => {
