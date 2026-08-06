@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.17
+
+- Make the Voyage selector reliably touch-scrollable on Safari/iPadOS with a
+  dedicated flex-column scroll region and non-shrinking voyage rows.
+
 ## 0.6.16
 
 - Cycle overlapping charts with Display's selected browser keyboard shortcut,

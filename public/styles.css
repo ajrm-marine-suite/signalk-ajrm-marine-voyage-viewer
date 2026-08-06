@@ -164,6 +164,7 @@ h2 {
   left: 52px;
   display: flex;
   flex-direction: column;
+  min-height: 0;
   overflow: hidden;
   transform: translateX(calc(-100% - 64px));
 }
@@ -232,10 +233,13 @@ h2 {
 }
 
 .voyage-list {
-  display: grid;
-  flex: 1 1 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  height: 0;
   min-height: 0;
-  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-y: scroll;
   overscroll-behavior: contain;
   gap: 6px;
   padding-right: 4px;
@@ -324,6 +328,7 @@ h2 {
 
 .file-row {
   display: grid;
+  flex: 0 0 auto;
   gap: 3px;
   width: 100%;
   padding: 9px 10px;
