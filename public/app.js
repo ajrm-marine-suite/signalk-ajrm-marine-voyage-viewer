@@ -1,4 +1,4 @@
-import * as MapCore from "./ajrm-map-core.mjs?v=0.6.9";
+import * as MapCore from "./ajrm-map-core.mjs?v=0.6.11";
 
 const apiBase = "/plugins/signalk-ajrm-marine-voyage-viewer";
 const elements = {
@@ -87,6 +87,7 @@ async function requestJson(url, options) {
 
 function initMap() {
   map = L.map(elements.map, { zoomControl: true }).setView([56.21, -5.56], 11);
+  MapCore.labelLeafletZoomControls(map);
   const naturalEarth = makeNaturalEarthLayer();
   const empty = L.tileLayer("");
   const openStreetMap = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {

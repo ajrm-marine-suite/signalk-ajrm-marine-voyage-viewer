@@ -1,10 +1,35 @@
 export const MAP_CORE_CONTRACT = "ajrm-marine-map-shell-v1";
-export const MAP_CORE_VERSION = "0.6.9";
+export const MAP_CORE_VERSION = "0.6.11";
 export const AUTO_CHARTS_NAME = "Auto Charts";
 export const OPEN_SEA_MAP_NAME = "OpenSeaMap";
 export const CHART_FOLDER_API_BASE = "/plugins/signalk-charts-provider-simple";
 export const CHART_CYCLE_SHORTCUT_STORAGE_KEY = "chartCycleShortcut";
 export const DEFAULT_CHART_CYCLE_SHORTCUT = "C";
+
+export function setMapControlHoverHelp(element, label) {
+	if (!element) return element;
+	const help = String(label || "").trim();
+	if (!help) {
+		element.removeAttribute?.("data-ajrm-map-help");
+		return element;
+	}
+	element.title = help;
+	element.setAttribute?.("title", help);
+	element.setAttribute?.("data-ajrm-map-help", help);
+	if (!element.getAttribute?.("aria-label")) {
+		element.setAttribute?.("aria-label", help);
+	}
+	return element;
+}
+
+export function labelLeafletZoomControls(map) {
+	const container = map?.getContainer?.();
+	const zoomIn = container?.querySelector?.(".leaflet-control-zoom-in") || null;
+	const zoomOut = container?.querySelector?.(".leaflet-control-zoom-out") || null;
+	setMapControlHoverHelp(zoomIn, "Zoom in");
+	setMapControlHoverHelp(zoomOut, "Zoom out");
+	return { zoomIn, zoomOut };
+}
 
 function controlIcon(paths, label) {
 	return `<svg class="ajrm-marine-control-icon" viewBox="0 0 16 16" width="1em" height="1em" aria-label="${label}" role="img" fill="currentColor" focusable="false">${paths}</svg>`;
@@ -157,14 +182,29 @@ export function chartId(chart) {
 }
 
 export function chartDisplayName(chart) {
-	return chart?.name ?? chart?.title ?? chart?.description ?? chartId(chart) ?? "Unnamed chart";
+	return chart?.name || chart?.title || chart?.description || chartId(chart) || "Unnamed chart";
+}
+
+export function chartCycleResultMessage(result) {
+	if (result?.mode === "disabled") return "Auto Charts is switched off";
+	if (result?.mode === "empty") return "No enabled chart covers the map centre";
+	if (result?.mode === "auto") return `Automatic chart: ${chartDisplayName(result.chart)}`;
+	if (result?.mode === "manual") {
+		return `Chart ${result.index} of ${result.total}: ${chartDisplayName(result.chart)}`;
+	}
+	return "Chart selection unavailable";
 }
 
 export function chartCycleStatusMessage({ selected, candidates = [], manualChartId = null }) {
-	if (!selected) return "No enabled chart covers the map centre";
-	if (!manualChartId) return `Automatic chart: ${chartDisplayName(selected)}`;
+	if (!selected) return chartCycleResultMessage({ mode: "empty" });
+	if (!manualChartId) return chartCycleResultMessage({ mode: "auto", chart: selected });
 	const index = candidates.findIndex((chart) => chartId(chart) === manualChartId);
-	return `Chart ${Math.max(0, index) + 1} of ${candidates.length}: ${chartDisplayName(selected)}`;
+	return chartCycleResultMessage({
+		mode: "manual",
+		chart: selected,
+		index: Math.max(0, index) + 1,
+		total: candidates.length,
+	});
 }
 
 export function createChartCycleState() {
@@ -278,12 +318,13 @@ export function createChartCycleControl({
 		const candidates = state.getCandidates(getCharts(), map);
 		button.disabled = candidates.length < 2;
 		const shortcut = chartCycleShortcut(storage);
-		button.title = candidates.length < 2
+		const help = candidates.length < 2
 			? "No overlapping charts to cycle"
 			: state.manualChartId
 				? `Cycle overlapping charts [${shortcut}] (${candidates.findIndex((chart) => chartId(chart) === state.manualChartId) + 1} of ${candidates.length})`
 				: `Cycle overlapping charts [${shortcut}] (Auto, ${candidates.length} available)`;
-		button.setAttribute("aria-label", button.title);
+		setMapControlHoverHelp(button, help);
+		button.setAttribute("aria-label", help);
 	};
 	const cycle = () => {
 		const candidates = state.getCandidates(getCharts(), map);
@@ -383,7 +424,7 @@ export function createActionToolbarControl({
 			actions.forEach((action) => {
 				const button = L.DomUtil.create("button", "ajrm-map-button", container);
 				button.type = "button";
-				button.title = action.title;
+				setMapControlHoverHelp(button, action.title);
 				button.setAttribute("aria-label", action.title);
 				button.innerHTML = action.icon;
 				buttons.push(button);
@@ -522,8 +563,8 @@ export function createChartSelectorControl({
 			const container = L.DomUtil.create("div", "leaflet-bar ajrm-map-selector");
 			const button = L.DomUtil.create("button", "ajrm-map-button", container);
 			button.type = "button";
-			button.title = "Charts";
-			button.setAttribute("aria-label", "Charts");
+			setMapControlHoverHelp(button, "Choose maps and charts");
+			button.setAttribute("aria-label", "Choose maps and charts");
 			button.setAttribute("aria-expanded", "false");
 			button.innerHTML = MAP_CONTROL_ICONS.layers;
 			panel = L.DomUtil.create("div", "ajrm-map-panel", container);

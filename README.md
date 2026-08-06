@@ -2,6 +2,9 @@
 
 Signal K webapp for plotting and reviewing AJRM Marine Capture voyage bundles.
 
+Version `0.6.20` adds visible hover/focus help to every map control icon,
+including zoom, chart selection, chart cycling and voyage actions.
+
 Version `0.6.19` shows the selected chart in a temporary top-centre status
 label when cycling overlapping charts, matching Display and DR Plotter.
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.20
+
+- Add visible hover/focus help to zoom, chart and Voyage Viewer map icons
+  through AJRM Marine Map Core 0.6.11.
+
 ## 0.6.19
 
 - Show the selected chart in a temporary top-centre status label when cycling
