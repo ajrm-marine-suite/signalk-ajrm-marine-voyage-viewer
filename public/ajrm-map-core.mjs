@@ -1,5 +1,5 @@
 export const MAP_CORE_CONTRACT = "ajrm-marine-map-shell-v1";
-export const MAP_CORE_VERSION = "0.6.8";
+export const MAP_CORE_VERSION = "0.6.9";
 export const AUTO_CHARTS_NAME = "Auto Charts";
 export const OPEN_SEA_MAP_NAME = "OpenSeaMap";
 export const CHART_FOLDER_API_BASE = "/plugins/signalk-charts-provider-simple";
@@ -156,6 +156,17 @@ export function chartId(chart) {
 	return chart?.__ajrmMapChartId ?? chart?.__autoChartId ?? chart?.identifier ?? chart?.id ?? null;
 }
 
+export function chartDisplayName(chart) {
+	return chart?.name ?? chart?.title ?? chart?.description ?? chartId(chart) ?? "Unnamed chart";
+}
+
+export function chartCycleStatusMessage({ selected, candidates = [], manualChartId = null }) {
+	if (!selected) return "No enabled chart covers the map centre";
+	if (!manualChartId) return `Automatic chart: ${chartDisplayName(selected)}`;
+	const index = candidates.findIndex((chart) => chartId(chart) === manualChartId);
+	return `Chart ${Math.max(0, index) + 1} of ${candidates.length}: ${chartDisplayName(selected)}`;
+}
+
 export function createChartCycleState() {
 	let manualChartId = null;
 
@@ -241,9 +252,27 @@ export function createChartCycleControl({
 	position = "topleft",
 	document = globalThis.document,
 	storage = globalThis.localStorage,
+	statusElement = null,
+	schedule = globalThis.setTimeout,
+	cancelSchedule = globalThis.clearTimeout,
+	statusDurationMs = 3500,
 }) {
 	const state = createChartCycleState();
 	let button;
+	let statusTimer = null;
+	const showStatus = (selected, candidates) => {
+		if (!statusElement) return;
+		statusElement.textContent = chartCycleStatusMessage({
+			selected,
+			candidates,
+			manualChartId: state.manualChartId,
+		});
+		statusElement.hidden = false;
+		if (statusTimer != null) cancelSchedule?.(statusTimer);
+		statusTimer = schedule?.(() => {
+			statusElement.hidden = true;
+		}, statusDurationMs);
+	};
 	const syncButton = () => {
 		if (!button) return;
 		const candidates = state.getCandidates(getCharts(), map);
@@ -257,10 +286,12 @@ export function createChartCycleControl({
 		button.setAttribute("aria-label", button.title);
 	};
 	const cycle = () => {
-		if (state.getCandidates(getCharts(), map).length < 2) return null;
+		const candidates = state.getCandidates(getCharts(), map);
+		if (candidates.length < 2) return null;
 		const selected = state.cycle(getCharts(), map);
 		syncButton();
 		onChange();
+		showStatus(selected, candidates);
 		return selected;
 	};
 	const keydownHandler = (event) => {
@@ -289,6 +320,7 @@ export function createChartCycleControl({
 		onRemove() {
 			map.off?.("moveend zoomend", syncButton);
 			document?.removeEventListener?.("keydown", keydownHandler);
+			if (statusTimer != null) cancelSchedule?.(statusTimer);
 		},
 	});
 	const control = new definition();

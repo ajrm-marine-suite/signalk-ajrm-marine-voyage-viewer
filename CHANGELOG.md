@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.19
+
+- Show the selected chart in a temporary top-centre status label when cycling
+  overlapping charts, matching Display and DR Plotter.
+
 ## 0.6.18
 
 - Keep the chart-folder list inside short browser windows and make the selector

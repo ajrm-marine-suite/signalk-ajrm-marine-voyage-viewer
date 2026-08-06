@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>AJRM Marine Voyage Viewer</title>
     <link rel="stylesheet" href="./leaflet.css">
-    <link rel="stylesheet" href="./ajrm-map-core.css?v=0.6.8">
-    <link rel="stylesheet" href="./styles.css?v=0.6.18">
+    <link rel="stylesheet" href="./ajrm-map-core.css?v=0.6.9">
+    <link rel="stylesheet" href="./styles.css?v=0.6.19">
   </head>
   <body>
     <div id="map" class="map" aria-label="Voyage chart"></div>
@@ -35,6 +35,10 @@
       <div class="progress-track">
         <div id="progressBar" class="progress-bar"></div>
       </div>
+    </div>
+
+    <div class="map-status-stack">
+      <div id="chartCycleStatus" class="ajrm-map-chart-cycle-status" role="status" aria-live="polite" hidden></div>
     </div>
 
     <aside id="voyageDrawer" class="drawer drawer-left" aria-label="Voyages">
@@ -118,6 +122,6 @@
     <div id="toast" class="toast" role="status"></div>
     <script src="./leaflet.js"></script>
     <script src="./protomaps-leaflet.js"></script>
-    <script type="module" src="./app.js?v=0.6.18"></script>
+    <script type="module" src="./app.js?v=0.6.19"></script>
   </body>
 </html>

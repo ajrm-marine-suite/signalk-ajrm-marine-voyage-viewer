@@ -1,4 +1,4 @@
-import * as MapCore from "./ajrm-map-core.mjs?v=0.6.8";
+import * as MapCore from "./ajrm-map-core.mjs?v=0.6.9";
 
 const apiBase = "/plugins/signalk-ajrm-marine-voyage-viewer";
 const elements = {
@@ -10,6 +10,7 @@ const elements = {
   voyageDrawer: document.querySelector("#voyageDrawer"),
   chartDrawer: document.querySelector("#chartDrawer"),
   chartStatus: document.querySelector("#chartStatus"),
+  chartCycleStatus: document.querySelector("#chartCycleStatus"),
   baseMapChoices: [...document.querySelectorAll('input[name="baseMap"]')],
   autoCharts: document.querySelector("#checkAutoCharts"),
   openSeaMap: document.querySelector("#checkOpenSeaMap"),
@@ -157,6 +158,7 @@ function installCommonChartSelector() {
     map,
     getCharts: () => autoChartList,
     onChange: updateAutoChart,
+    statusElement: elements.chartCycleStatus,
   }).addTo();
   mapActionToolbar = MapCore.createActionToolbarControl({
     L,
