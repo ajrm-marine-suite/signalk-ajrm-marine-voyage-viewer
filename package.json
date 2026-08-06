@@ -1,6 +1,6 @@
 {
   "name": "signalk-ajrm-marine-voyage-viewer",
-  "version": "0.6.11",
+  "version": "0.6.12",
   "description": "Plots and exports AJRM Marine Capture voyage tracks.",
   "main": "plugin/index.js",
   "scripts": {
@@ -50,7 +50,7 @@
     "yauzl": "^3.4.0"
   },
   "devDependencies": {
-    "@ajrm-marine/map-core": "github:ajrm-marine-suite/ajrm-marine-map-core#v0.6.2",
+    "@ajrm-marine/map-core": "github:ajrm-marine-suite/ajrm-marine-map-core#v0.6.3",
     "adm-zip": "^0.6.0"
   }
 }

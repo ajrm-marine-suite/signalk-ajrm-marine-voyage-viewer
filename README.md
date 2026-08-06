@@ -2,6 +2,10 @@
 
 Signal K webapp for plotting and reviewing AJRM Marine Capture voyage bundles.
 
+Version `0.6.12` replaces the upper-right action group with Display-style icon
+controls in the left Leaflet stack. The `+ / −` zoom buttons remain first,
+followed by chart controls, Voyages, Refresh and Voyage Summary.
+
 Version `0.6.11` adopts the shared AJRM Marine map controls: Display-style
 basemap and overlay selection, nested Charts Provider Simple folder toggles,
 and a chart-cycle button for overlapping charts.

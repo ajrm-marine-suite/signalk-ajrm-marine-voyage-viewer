@@ -1,8 +1,19 @@
 export const MAP_CORE_CONTRACT = "ajrm-marine-map-shell-v1";
-export const MAP_CORE_VERSION = "0.6.2";
+export const MAP_CORE_VERSION = "0.6.3";
 export const AUTO_CHARTS_NAME = "Auto Charts";
 export const OPEN_SEA_MAP_NAME = "OpenSeaMap";
 export const CHART_FOLDER_API_BASE = "/plugins/signalk-charts-provider-simple";
+
+export const MAP_ACTION_ICONS = Object.freeze({
+	status: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v3H4V4Zm0 6h16v3H4v-3Zm0 6h16v3H4v-3Z"/></svg>',
+	follow: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.7 3.3-7.2 17.1-2.8-7.1-7.1-2.8 17.1-7.2ZM11.9 11l1.6 4 3.1-7.6L9 10.5l2.9.5Z"/></svg>',
+	plot: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5.3 7 13 7 13s7-7.7 7-13a7 7 0 0 0-7-7Zm0 10a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z"/></svg>',
+	list: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h3v3H4V5Zm5 0h11v3H9V5ZM4 10.5h3v3H4v-3Zm5 0h11v3H9v-3ZM4 16h3v3H4v-3Zm5 0h11v3H9v-3Z"/></svg>',
+	refresh: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 6.3A8 8 0 1 0 20 12h-3a5 5 0 1 1-1.5-3.5L12 12h8V4l-2.3 2.3Z"/></svg>',
+	summary: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5V3Zm3 4v2h8V7H8Zm0 4v2h8v-2H8Zm0 4v2h5v-2H8Z"/></svg>',
+	edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16 9.6-9.6 4 4L8 20H4v-4Zm11-11 2-2 4 4-2 2-4-4Z"/></svg>',
+	settings: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m19.4 13 .1-1-.1-1 2.1-1.6-2-3.4-2.6 1a8 8 0 0 0-1.7-1L15 3h-4l-.4 2.9a8 8 0 0 0-1.7 1l-2.6-1-2 3.4L6.4 11l-.1 1 .1 1-2.1 1.6 2 3.4 2.6-1a8 8 0 0 0 1.7 1L11 21h4l.4-2.9a8 8 0 0 0 1.7-1l2.6 1 2-3.4-2.3-1.7ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg>',
+});
 
 const ZOOM_TOLERANCE = 0.1;
 
@@ -229,6 +240,65 @@ export function createChartCycleControl({
 		get manualChartId() {
 			return state.manualChartId;
 		},
+	};
+}
+
+export function mapActionState(action) {
+	return {
+		visible: action.isVisible?.() !== false,
+		disabled: action.isDisabled?.() === true,
+		pressed: action.isPressed?.() === true,
+	};
+}
+
+export function createActionToolbarControl({
+	L,
+	map,
+	actions,
+	position = "topleft",
+}) {
+	const buttons = [];
+	const update = () => {
+		actions.forEach((action, index) => {
+			const button = buttons[index];
+			if (!button) return;
+			const state = mapActionState(action);
+			button.hidden = !state.visible;
+			button.disabled = state.disabled;
+			button.setAttribute("aria-pressed", String(state.pressed));
+		});
+	};
+	const definition = L.Control.extend({
+		options: { position },
+		onAdd() {
+			const container = L.DomUtil.create("div", "leaflet-bar ajrm-map-actions");
+			actions.forEach((action) => {
+				const button = L.DomUtil.create("button", "ajrm-map-button", container);
+				button.type = "button";
+				button.title = action.title;
+				button.setAttribute("aria-label", action.title);
+				button.innerHTML = action.icon;
+				buttons.push(button);
+				L.DomEvent.on(button, "click", (event) => {
+					L.DomEvent.stop(event);
+					if (button.disabled) return;
+					action.activate();
+					queueMicrotask(update);
+				});
+			});
+			L.DomEvent.disableClickPropagation(container);
+			update();
+			return container;
+		},
+	});
+	const control = new definition();
+	return {
+		control,
+		addTo(target = map) {
+			control.addTo(target);
+			return this;
+		},
+		update,
 	};
 }
 

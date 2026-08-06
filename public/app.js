@@ -1,4 +1,4 @@
-import * as MapCore from "./ajrm-map-core.mjs?v=0.6.2";
+import * as MapCore from "./ajrm-map-core.mjs?v=0.6.3";
 
 const apiBase = "/plugins/signalk-ajrm-marine-voyage-viewer";
 const elements = {
@@ -50,6 +50,7 @@ let autoChartFallbackLayer;
 let autoChartId;
 let autoChartList = [];
 let chartCycle = null;
+let mapActionToolbar = null;
 let chartResourcesLoaded = false;
 let chartResourcesLoading = null;
 let seamarkLayer;
@@ -156,6 +157,15 @@ function installCommonChartSelector() {
     map,
     getCharts: () => autoChartList,
     onChange: updateAutoChart,
+  }).addTo();
+  mapActionToolbar = MapCore.createActionToolbarControl({
+    L,
+    map,
+    actions: [
+      { title: "Voyages", icon: MapCore.MAP_ACTION_ICONS.list, activate: () => elements.toggleVoyages.click(), isPressed: () => elements.voyageDrawer.classList.contains("open") },
+      { title: "Refresh voyages", icon: MapCore.MAP_ACTION_ICONS.refresh, activate: () => elements.refreshVoyages.click() },
+      { title: "Voyage summary", icon: MapCore.MAP_ACTION_ICONS.summary, activate: () => elements.toggleSummary.click(), isPressed: () => elements.summaryPanel.classList.contains("open") },
+    ],
   }).addTo();
 }
 
@@ -1351,6 +1361,7 @@ function syncPanelButtons() {
   elements.toggleVoyages.setAttribute("aria-pressed", String(elements.voyageDrawer.classList.contains("open")));
   elements.toggleCharts.setAttribute("aria-pressed", String(elements.chartDrawer.classList.contains("open")));
   elements.toggleSummary.setAttribute("aria-pressed", String(elements.summaryPanel.classList.contains("open")));
+  mapActionToolbar?.update();
 }
 
 function togglePanel(panel) {

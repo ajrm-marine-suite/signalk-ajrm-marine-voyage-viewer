@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.12
+
+- Move Voyages, Refresh and Voyage Summary from the upper-right header into
+  the shared Display-style left map-control stack.
+- Retain the standard Leaflet `+ / −` zoom buttons at the top of that stack.
+
 ## 0.6.11
 
 - Replace the separate chart drawer with the shared Display-style map control.
