@@ -2,6 +2,10 @@
 
 Signal K webapp for plotting and reviewing AJRM Marine Capture voyage bundles.
 
+Version `0.6.11` adopts the shared AJRM Marine map controls: Display-style
+basemap and overlay selection, nested Charts Provider Simple folder toggles,
+and a chart-cycle button for overlapping charts.
+
 The app now lists voyages only. Any selected voyage can be plotted on a Leaflet
 chart, reviewed, exported as GPX 1.1, or downloaded. Individual Logger files
 and the retired Clips workflow are no longer exposed in the user interface.

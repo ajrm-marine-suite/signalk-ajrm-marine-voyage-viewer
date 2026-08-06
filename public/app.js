@@ -1,3 +1,5 @@
+import * as MapCore from "./ajrm-map-core.mjs?v=0.6.2";
+
 const apiBase = "/plugins/signalk-ajrm-marine-voyage-viewer";
 const elements = {
   map: document.querySelector("#map"),
@@ -47,6 +49,7 @@ let autoChartLayer;
 let autoChartFallbackLayer;
 let autoChartId;
 let autoChartList = [];
+let chartCycle = null;
 let chartResourcesLoaded = false;
 let chartResourcesLoading = null;
 let seamarkLayer;
@@ -123,12 +126,37 @@ function initMap() {
     localStorage.getItem("ajrmMarineVoyageViewerOpenSeaMap") !== "false",
     "ajrmMarineVoyageViewerOpenSeaMap",
   );
+  installCommonChartSelector();
   trackLayer = L.layerGroup().addTo(map);
   drTrackLayer = L.layerGroup().addTo(map);
   routeLayer = L.layerGroup().addTo(map);
   markerLayer = L.layerGroup().addTo(map);
   map.on("moveend zoomend", updateAutoChart);
   loadChartResources();
+}
+
+function installCommonChartSelector() {
+  MapCore.createChartSelectorControl({
+    L,
+    map,
+    baseMaps: baseLayers,
+    getBaseMap: () => localStorage.getItem("ajrmMarineVoyageViewerBaseMap") || "NaturalEarth (offline)",
+    setBaseMap,
+    overlays: [
+      { name: MapCore.OPEN_SEA_MAP_NAME, isEnabled: () => map.hasLayer(seamarkLayer), setEnabled: (enabled) => setOverlay(seamarkLayer, enabled, "ajrmMarineVoyageViewerOpenSeaMap") },
+      { name: MapCore.AUTO_CHARTS_NAME, isEnabled: () => map.hasLayer(autoChartGroup), setEnabled: setAutoChartsEnabled },
+    ],
+    onFoldersChanged: async () => {
+      await loadChartResources({ force: true });
+      updateAutoChart();
+    },
+  }).addTo();
+  chartCycle = MapCore.createChartCycleControl({
+    L,
+    map,
+    getCharts: () => autoChartList,
+    onChange: updateAutoChart,
+  }).addTo();
 }
 
 function makeNaturalEarthLayer() {
@@ -305,25 +333,7 @@ function makeAutoChartFallbackLayer() {
 }
 
 function chooseAutoChart() {
-  if (!map) return null;
-  const center = map.getCenter();
-  const zoom = map.getZoom();
-  const containing = autoChartList.filter((chart) => chartContains(chart, center.lat, center.lng));
-  const matches = containing.filter((chart) => {
-    const range = chartZoom(chart);
-    return zoom >= range.min - 0.1 && zoom <= map.getMaxZoom() + 0.1;
-  });
-  return (
-    matches.sort((a, b) => {
-      const zoomA = chartZoom(a);
-      const zoomB = chartZoom(b);
-      return (
-        zoomB.min - zoomA.min ||
-        chartArea(a, center.lat, center.lng) - chartArea(b, center.lat, center.lng) ||
-        zoomB.max - zoomA.max
-      );
-    })[0] || null
-  );
+  return map ? (chartCycle?.choose(autoChartList, map) ?? MapCore.chooseChart(autoChartList, map)) : null;
 }
 
 function updateAutoChart() {
@@ -372,10 +382,7 @@ async function loadChartResources({ force = false } = {}) {
         const data = await requestJson(`${apiBase}/charts`);
         charts = data.charts || {};
       }
-      autoChartList = Object.entries(charts || {}).map(([id, chart]) => ({
-        ...(chart || {}),
-        __autoChartId: id,
-      }));
+      autoChartList = MapCore.normalizeChartResources(charts);
       chartResourcesLoaded = true;
       elements.chartStatus.textContent = `${autoChartList.length} chart resource${autoChartList.length === 1 ? "" : "s"} found`;
       updateAutoChart();

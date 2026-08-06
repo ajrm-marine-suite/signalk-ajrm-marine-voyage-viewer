@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.11
+
+- Replace the separate chart drawer with the shared Display-style map control.
+- Add nested Charts Provider Simple folder enable/disable controls beneath
+  Auto Charts.
+- Add overlap cycling using the shared Display chart-ranking contract.
+
 ## 0.6.10
 
 - Expose the existing voyage analysis engine through a read-only in-process API
