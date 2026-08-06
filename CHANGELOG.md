@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.14
+
+- Give the voyage list an explicit flexible scroll viewport, including touch
+  scrolling and contained overscroll, so long voyage histories remain usable.
+
 ## 0.6.13
 
 - Start with the Voyage selector closed and expose it only through its left

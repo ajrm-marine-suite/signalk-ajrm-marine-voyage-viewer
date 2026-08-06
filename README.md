@@ -2,6 +2,9 @@
 
 Signal K webapp for plotting and reviewing AJRM Marine Capture voyage bundles.
 
+Version `0.6.14` keeps the Voyage selector header and actions fixed while its
+voyage list scrolls independently, including on touch screens.
+
 Version `0.6.13` starts with the Voyage selector closed. Its toolbar button
 opens it beside, rather than over, the left map controls. Application action
 buttons use the vertical Map Core `0.6.4` stack.
