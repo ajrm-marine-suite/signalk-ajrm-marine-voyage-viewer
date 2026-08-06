@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.18
+
+- Keep the chart-folder list inside short browser windows and make the selector
+  reliably scrollable with mouse, touch and iPadOS momentum scrolling.
+
 ## 0.6.17
 
 - Make the Voyage selector reliably touch-scrollable on Safari/iPadOS with a

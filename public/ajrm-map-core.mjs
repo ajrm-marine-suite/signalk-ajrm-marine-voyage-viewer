@@ -1,5 +1,5 @@
 export const MAP_CORE_CONTRACT = "ajrm-marine-map-shell-v1";
-export const MAP_CORE_VERSION = "0.6.7";
+export const MAP_CORE_VERSION = "0.6.8";
 export const AUTO_CHARTS_NAME = "Auto Charts";
 export const OPEN_SEA_MAP_NAME = "OpenSeaMap";
 export const CHART_FOLDER_API_BASE = "/plugins/signalk-charts-provider-simple";
@@ -451,6 +451,25 @@ function renderFolders(folders) {
 	return folders.map((folder) => `<label class="ajrm-map-folder${folder.enabled && !folder.effectiveEnabled ? " inherited-disabled" : ""}" style="--folder-depth:${folder.depth}" title="${escapeHtml(folder.path)}"><input type="checkbox" data-chart-folder value="${escapeHtml(folder.path)}"${folder.enabled ? " checked" : ""}><span>${escapeHtml(folder.name)}</span></label>`).join("");
 }
 
+export function floatingPanelHeight({
+	top = 0,
+	viewportHeight = 0,
+	bottomGap = 12,
+	maximum = 560,
+	minimum = 48,
+} = {}) {
+	const available = Number(viewportHeight) - Number(top) - Number(bottomGap);
+	return Math.max(minimum, Math.min(maximum, Number.isFinite(available) ? available : maximum));
+}
+
+export function fitFloatingPanel(panel, windowObject = globalThis.window) {
+	if (!panel) return null;
+	const top = panel.getBoundingClientRect?.().top ?? 0;
+	const height = floatingPanelHeight({ top, viewportHeight: windowObject?.innerHeight });
+	panel.style.maxHeight = `${Math.floor(height)}px`;
+	return height;
+}
+
 export function createChartSelectorControl({
 	L,
 	map,
@@ -461,12 +480,13 @@ export function createChartSelectorControl({
 	folderClient = createFolderClient(),
 	onFoldersChanged = () => {},
 	position = "topleft",
+	windowObject = globalThis.window,
 }) {
 	let panel;
 	let renderPanel = () => {};
 	const definition = L.Control.extend({
 		options: { position },
-		onAdd() {
+			onAdd() {
 			const container = L.DomUtil.create("div", "leaflet-bar ajrm-map-selector");
 			const button = L.DomUtil.create("button", "ajrm-map-button", container);
 			button.type = "button";
@@ -490,10 +510,15 @@ export function createChartSelectorControl({
 					details.hidden = !result.supported || result.folders.length === 0;
 					const list = details.querySelector("[data-folder-list]");
 					if (list) list.innerHTML = renderFolders(result.folders);
+					fitFloatingPanel(panel, windowObject);
 				} catch (error) {
 					details.hidden = false;
 					details.querySelector("[data-folder-list]").textContent = error.message;
+					fitFloatingPanel(panel, windowObject);
 				}
+			};
+			const fitPanel = () => {
+				if (!panel.hidden) fitFloatingPanel(panel, windowObject);
 			};
 			renderPanel();
 			L.DomEvent.disableClickPropagation(container);
@@ -504,9 +529,11 @@ export function createChartSelectorControl({
 				button.setAttribute("aria-expanded", String(!panel.hidden));
 				if (!panel.hidden) {
 					renderPanel();
+					fitPanel();
 					void refreshFolders();
 				}
 			});
+			windowObject?.addEventListener?.("resize", fitPanel);
 			panel.addEventListener("change", async (event) => {
 				const input = event.target;
 				if (!(input instanceof HTMLInputElement)) return;

@@ -2,6 +2,10 @@
 
 Signal K webapp for plotting and reviewing AJRM Marine Capture voyage bundles.
 
+Version `0.6.18` keeps chart folders reachable in short browser windows by
+measuring the selector's remaining viewport height and enabling contained
+mouse/touch scrolling through Map Core `0.6.8`.
+
 Version `0.6.17` makes the Voyage selector reliably touch-scrollable on
 Safari/iPadOS by using a dedicated fixed-basis flex scroll region whose voyage
 rows cannot shrink.
