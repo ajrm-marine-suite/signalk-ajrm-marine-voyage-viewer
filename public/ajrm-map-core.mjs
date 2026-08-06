@@ -1,18 +1,45 @@
 export const MAP_CORE_CONTRACT = "ajrm-marine-map-shell-v1";
-export const MAP_CORE_VERSION = "0.6.4";
+export const MAP_CORE_VERSION = "0.6.5";
 export const AUTO_CHARTS_NAME = "Auto Charts";
 export const OPEN_SEA_MAP_NAME = "OpenSeaMap";
 export const CHART_FOLDER_API_BASE = "/plugins/signalk-charts-provider-simple";
 
+function controlIcon(paths, label) {
+	return `<svg class="ajrm-marine-control-icon" viewBox="0 0 16 16" width="1em" height="1em" aria-label="${label}" role="img" fill="currentColor" focusable="false">${paths}</svg>`;
+}
+
+export const MAP_CONTROL_ICONS = Object.freeze({
+	targets: controlIcon(
+		'<path fill-rule="evenodd" d="M2.5 12a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5"/><path d="M1 4a.75.75 0 1 0 0-1.5A.75.75 0 0 0 1 4m0 4a.75.75 0 1 0 0-1.5A.75.75 0 0 0 1 8m0 4a.75.75 0 1 0 0-1.5A.75.75 0 0 0 1 12"/>',
+		"List",
+	),
+	settings: controlIcon(
+		'<path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.46 1.46 0 0 1-2.105.872l-.31-.18c-1.266-.73-2.668.672-1.937 1.937l.178.31c.446.775.072 1.767-.871 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.46 1.46 0 0 1 .872 2.105l-.18.31c-.73 1.266.672 2.668 1.937 1.937l.31-.178a1.46 1.46 0 0 1 2.105.871l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.46 1.46 0 0 1 2.105-.872l.31.18c1.266.73 2.668-.672 1.937-1.937l-.178-.31a1.46 1.46 0 0 1 .871-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.46 1.46 0 0 1-.872-2.105l.18-.31c.73-1.266-.672-2.668-1.937-1.937l-.31.178a1.46 1.46 0 0 1-2.105-.871zM8 10.93a2.93 2.93 0 1 1 0-5.86 2.93 2.93 0 0 1 0 5.86"/>',
+		"Settings",
+	),
+	follow: controlIcon(
+		'<path d="M14.082 2.182a.5.5 0 0 1 .103.557l-5.5 12a.5.5 0 0 1-.95-.084L6.57 9.43 1.345 8.265a.5.5 0 0 1-.084-.95l12-5.5a.5.5 0 0 1 .821.367"/>',
+		"Follow own vessel",
+	),
+	layers: controlIcon(
+		'<path d="M8.235 1.559a.5.5 0 0 0-.47 0l-7.5 4a.5.5 0 0 0 0 .882l7.5 4a.5.5 0 0 0 .47 0l7.5-4a.5.5 0 0 0 0-.882z"/><path d="m2.125 8.567-1.86.992a.5.5 0 0 0 0 .882l7.5 4a.5.5 0 0 0 .47 0l7.5-4a.5.5 0 0 0 0-.882l-1.86-.992-5.17 2.756a1.5 1.5 0 0 1-1.41 0z"/>',
+		"Charts",
+	),
+	cycleCharts: controlIcon(
+		'<path d="M8 3a5 5 0 0 0-4.546 2.914.5.5 0 0 1-.908-.418A6 6 0 0 1 13.47 4H15.5a.5.5 0 0 1 0 1H12a.5.5 0 0 1-.5-.5V1a.5.5 0 0 1 1 0v2.19A5.97 5.97 0 0 1 8 3m4.546 7.086a.5.5 0 0 1 .908.418A6 6 0 0 1 2.53 12H.5a.5.5 0 0 1 0-1H4a.5.5 0 0 1 .5.5V15a.5.5 0 0 1-1 0v-2.19A5.97 5.97 0 0 1 8 13a5 5 0 0 0 4.546-2.914"/><path d="M4.5 7.25 8 5.5l3.5 1.75L8 9zM4.5 9 8 10.75 11.5 9v1L8 11.75 4.5 10z"/>',
+		"Cycle chart",
+	),
+});
+
 export const MAP_ACTION_ICONS = Object.freeze({
-	status: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v3H4V4Zm0 6h16v3H4v-3Zm0 6h16v3H4v-3Z"/></svg>',
-	follow: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.7 3.3-7.2 17.1-2.8-7.1-7.1-2.8 17.1-7.2ZM11.9 11l1.6 4 3.1-7.6L9 10.5l2.9.5Z"/></svg>',
-	plot: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5.3 7 13 7 13s7-7.7 7-13a7 7 0 0 0-7-7Zm0 10a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z"/></svg>',
-	list: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h3v3H4V5Zm5 0h11v3H9V5ZM4 10.5h3v3H4v-3Zm5 0h11v3H9v-3ZM4 16h3v3H4v-3Zm5 0h11v3H9v-3Z"/></svg>',
-	refresh: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 6.3A8 8 0 1 0 20 12h-3a5 5 0 1 1-1.5-3.5L12 12h8V4l-2.3 2.3Z"/></svg>',
-	summary: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5V3Zm3 4v2h8V7H8Zm0 4v2h8v-2H8Zm0 4v2h5v-2H8Z"/></svg>',
-	edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16 9.6-9.6 4 4L8 20H4v-4Zm11-11 2-2 4 4-2 2-4-4Z"/></svg>',
-	settings: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m19.4 13 .1-1-.1-1 2.1-1.6-2-3.4-2.6 1a8 8 0 0 0-1.7-1L15 3h-4l-.4 2.9a8 8 0 0 0-1.7 1l-2.6-1-2 3.4L6.4 11l-.1 1 .1 1-2.1 1.6 2 3.4 2.6-1a8 8 0 0 0 1.7 1L11 21h4l.4-2.9a8 8 0 0 0 1.7-1l2.6 1 2-3.4-2.3-1.7ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg>',
+	status: MAP_CONTROL_ICONS.targets,
+	follow: MAP_CONTROL_ICONS.follow,
+	plot: controlIcon('<path d="M8 0a5.53 5.53 0 0 0-5.5 5.5c0 3.8 5.5 10.5 5.5 10.5s5.5-6.7 5.5-10.5A5.53 5.53 0 0 0 8 0m0 8a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5"/>', "Plot position"),
+	list: MAP_CONTROL_ICONS.targets,
+	refresh: controlIcon('<path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 11.47 4H9.5a.5.5 0 0 1 0-1H13a.5.5 0 0 1 .5.5V7a.5.5 0 0 1-1 0V4.81A5.97 5.97 0 0 0 8 3"/>', "Refresh"),
+	summary: controlIcon('<path d="M4 0h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2m1 4.5a.5.5 0 0 0 0 1h6a.5.5 0 0 0 0-1zm0 3a.5.5 0 0 0 0 1h6a.5.5 0 0 0 0-1zm0 3a.5.5 0 0 0 0 1h4a.5.5 0 0 0 0-1z"/>', "Summary"),
+	edit: controlIcon('<path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207zM12.793 5.5 10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293z"/>', "Edit"),
+	settings: MAP_CONTROL_ICONS.settings,
 });
 
 const ZOOM_TOLERANCE = 0.1;
@@ -201,7 +228,7 @@ export function createChartCycleControl({
 			const container = L.DomUtil.create("div", "leaflet-bar ajrm-map-cycle");
 			button = L.DomUtil.create("button", "ajrm-map-button", container);
 			button.type = "button";
-			button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.95 7.95 0 0 0 12 4V1L8 5l4 4V6a6 6 0 1 1-5.65 4H4.26A8 8 0 1 0 17.65 6.35Z"/></svg>';
+			button.innerHTML = MAP_CONTROL_ICONS.cycleCharts;
 			L.DomEvent.disableClickPropagation(container);
 			L.DomEvent.on(button, "click", (event) => {
 				L.DomEvent.stop(event);
@@ -397,7 +424,7 @@ export function createChartSelectorControl({
 			button.title = "Charts";
 			button.setAttribute("aria-label", "Charts");
 			button.setAttribute("aria-expanded", "false");
-			button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-6-3-6 3 6 3 6-3Zm6 4-6-3-6 3-6-3v4l6 3 6-3 6 3V9Zm0 5-6-3-6 3-6-3v4l6 3 6-3 6 3v-4Z"/></svg>';
+			button.innerHTML = MAP_CONTROL_ICONS.layers;
 			panel = L.DomUtil.create("div", "ajrm-map-panel", container);
 			panel.hidden = true;
 			renderPanel = () => {

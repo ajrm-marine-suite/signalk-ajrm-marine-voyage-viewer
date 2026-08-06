@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.15
+
+- Match Display's map toolbar with 38 px buttons, larger shared SVG icons and
+  uniform 10 px spacing between every control.
+
 ## 0.6.14
 
 - Give the voyage list an explicit flexible scroll viewport, including touch
