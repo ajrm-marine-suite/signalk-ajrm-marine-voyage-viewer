@@ -150,7 +150,7 @@ h2 {
   top: 84px;
   bottom: 168px;
   z-index: 520;
-  width: min(360px, calc(100vw - 24px));
+  width: min(360px, calc(100vw - 64px));
   overflow: auto;
   padding: 14px;
   border: 1px solid #d5dde1;
@@ -161,11 +161,11 @@ h2 {
 }
 
 .drawer-left {
-  left: 12px;
+  left: 52px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transform: translateX(calc(-100% - 24px));
+  transform: translateX(calc(-100% - 64px));
 }
 
 .drawer-right {

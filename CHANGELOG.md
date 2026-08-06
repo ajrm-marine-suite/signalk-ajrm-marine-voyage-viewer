@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.13
+
+- Start with the Voyage selector closed and expose it only through its left
+  toolbar button.
+- Offset the open Voyage selector to the right of the map toolbar so it does
+  not cover zoom, chart or application controls.
+- Enforce vertical application action buttons through Map Core 0.6.4.
+
 ## 0.6.12
 
 - Move Voyages, Refresh and Voyage Summary from the upper-right header into

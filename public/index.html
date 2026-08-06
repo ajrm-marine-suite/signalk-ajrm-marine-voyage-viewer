@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>AJRM Marine Voyage Viewer</title>
     <link rel="stylesheet" href="./leaflet.css">
-    <link rel="stylesheet" href="./ajrm-map-core.css?v=0.6.3">
-    <link rel="stylesheet" href="./styles.css?v=0.6.12">
+    <link rel="stylesheet" href="./ajrm-map-core.css?v=0.6.4">
+    <link rel="stylesheet" href="./styles.css?v=0.6.13">
   </head>
   <body>
     <div id="map" class="map" aria-label="Voyage chart"></div>
@@ -20,7 +20,7 @@
         </div>
       </div>
       <div class="top-actions">
-        <button id="toggleVoyages" type="button" aria-pressed="true">Voyages</button>
+        <button id="toggleVoyages" type="button" aria-pressed="false">Voyages</button>
         <button id="toggleCharts" type="button" hidden>Charts</button>
         <button id="refreshVoyages" type="button">Refresh</button>
         <button id="toggleSummary" type="button" aria-pressed="true">Summary</button>
@@ -37,7 +37,7 @@
       </div>
     </div>
 
-    <aside id="voyageDrawer" class="drawer drawer-left open" aria-label="Voyages">
+    <aside id="voyageDrawer" class="drawer drawer-left" aria-label="Voyages">
       <div class="drawer-header">
         <div>
           <h2>Voyages</h2>
@@ -118,6 +118,6 @@
     <div id="toast" class="toast" role="status"></div>
     <script src="./leaflet.js"></script>
     <script src="./protomaps-leaflet.js"></script>
-    <script type="module" src="./app.js?v=0.6.12"></script>
+    <script type="module" src="./app.js?v=0.6.13"></script>
   </body>
 </html>
