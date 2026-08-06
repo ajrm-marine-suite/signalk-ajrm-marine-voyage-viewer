@@ -19,8 +19,8 @@ test("map page uses the standard left-side controls with zoom first", async () =
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
     readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
   ]);
-  assert.match(html, /ajrm-map-core\.css\?v=0\.6\.5/);
-  assert.match(html, /type="module" src="\.\/app\.js\?v=0\.6\.15"/);
+  assert.match(html, /ajrm-map-core\.css\?v=0\.6\.7/);
+  assert.match(html, /type="module" src="\.\/app\.js\?v=0\.6\.16"/);
   assert.match(html, /<header class="topbar" hidden>/);
   assert.match(html, /id="toggleVoyages"[^>]+aria-pressed="false"/);
   assert.match(html, /id="voyageDrawer" class="drawer drawer-left"/);
@@ -33,6 +33,7 @@ test("map page uses the standard left-side controls with zoom first", async () =
   assert.match(app, /L\.map\(elements\.map, \{ zoomControl: true \}\)/);
   assert.match(app, /MapCore\.createChartSelectorControl/);
   assert.match(app, /MapCore\.createChartCycleControl/);
+  assert.match(await readFile(new URL("../public/ajrm-map-core.mjs", import.meta.url), "utf8"), /CHART_CYCLE_SHORTCUT_STORAGE_KEY = "chartCycleShortcut"/);
   assert.match(app, /MapCore\.createActionToolbarControl/);
   assert.doesNotMatch(app, /position:\s*["']topright["']/);
 });

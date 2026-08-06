@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.16
+
+- Cycle overlapping charts with Display's selected browser keyboard shortcut,
+  defaulting to `C` and ignoring keystrokes while editing form controls.
+
 ## 0.6.15
 
 - Match Display's map toolbar with 38 px buttons, larger shared SVG icons and

@@ -1,8 +1,10 @@
 export const MAP_CORE_CONTRACT = "ajrm-marine-map-shell-v1";
-export const MAP_CORE_VERSION = "0.6.5";
+export const MAP_CORE_VERSION = "0.6.7";
 export const AUTO_CHARTS_NAME = "Auto Charts";
 export const OPEN_SEA_MAP_NAME = "OpenSeaMap";
 export const CHART_FOLDER_API_BASE = "/plugins/signalk-charts-provider-simple";
+export const CHART_CYCLE_SHORTCUT_STORAGE_KEY = "chartCycleShortcut";
+export const DEFAULT_CHART_CYCLE_SHORTCUT = "C";
 
 function controlIcon(paths, label) {
 	return `<svg class="ajrm-marine-control-icon" viewBox="0 0 16 16" width="1em" height="1em" aria-label="${label}" role="img" fill="currentColor" focusable="false">${paths}</svg>`;
@@ -202,12 +204,43 @@ export function createChartCycleState() {
 	};
 }
 
+export function normalizeChartCycleShortcut(value) {
+	const shortcut = String(value ?? "").trim().slice(0, 1).toUpperCase();
+	return shortcut || DEFAULT_CHART_CYCLE_SHORTCUT;
+}
+
+export function isEditableShortcutTarget(target) {
+	const tagName = String(target?.tagName || "").toLowerCase();
+	return target?.isContentEditable === true || ["input", "textarea", "select"].includes(tagName);
+}
+
+export function chartCycleShortcut(storage = globalThis.localStorage) {
+	try {
+		return normalizeChartCycleShortcut(storage?.getItem?.(CHART_CYCLE_SHORTCUT_STORAGE_KEY));
+	} catch {
+		return DEFAULT_CHART_CYCLE_SHORTCUT;
+	}
+}
+
+export function isChartCycleShortcutEvent(event, storage = globalThis.localStorage) {
+	return !event?.defaultPrevented &&
+		!event?.repeat &&
+		!event?.altKey &&
+		!event?.ctrlKey &&
+		!event?.metaKey &&
+		!isEditableShortcutTarget(event?.target) &&
+		String(event?.key || "").length === 1 &&
+		normalizeChartCycleShortcut(event.key) === chartCycleShortcut(storage);
+}
+
 export function createChartCycleControl({
 	L,
 	map,
 	getCharts,
 	onChange = () => {},
 	position = "topleft",
+	document = globalThis.document,
+	storage = globalThis.localStorage,
 }) {
 	const state = createChartCycleState();
 	let button;
@@ -215,12 +248,25 @@ export function createChartCycleControl({
 		if (!button) return;
 		const candidates = state.getCandidates(getCharts(), map);
 		button.disabled = candidates.length < 2;
+		const shortcut = chartCycleShortcut(storage);
 		button.title = candidates.length < 2
 			? "No overlapping charts to cycle"
 			: state.manualChartId
-				? `Cycle overlapping charts (${candidates.findIndex((chart) => chartId(chart) === state.manualChartId) + 1} of ${candidates.length})`
-				: `Cycle overlapping charts (Auto, ${candidates.length} available)`;
+				? `Cycle overlapping charts [${shortcut}] (${candidates.findIndex((chart) => chartId(chart) === state.manualChartId) + 1} of ${candidates.length})`
+				: `Cycle overlapping charts [${shortcut}] (Auto, ${candidates.length} available)`;
 		button.setAttribute("aria-label", button.title);
+	};
+	const cycle = () => {
+		if (state.getCandidates(getCharts(), map).length < 2) return null;
+		const selected = state.cycle(getCharts(), map);
+		syncButton();
+		onChange();
+		return selected;
+	};
+	const keydownHandler = (event) => {
+		if (!isChartCycleShortcutEvent(event, storage)) return;
+		if (!cycle()) return;
+		event.preventDefault?.();
 	};
 	const definition = L.Control.extend({
 		options: { position },
@@ -233,13 +279,16 @@ export function createChartCycleControl({
 			L.DomEvent.on(button, "click", (event) => {
 				L.DomEvent.stop(event);
 				if (button.disabled) return;
-				state.cycle(getCharts(), map);
-				syncButton();
-				onChange();
+				cycle();
 			});
 			map.on("moveend zoomend", syncButton);
+			document?.addEventListener?.("keydown", keydownHandler);
 			syncButton();
 			return container;
+		},
+		onRemove() {
+			map.off?.("moveend zoomend", syncButton);
+			document?.removeEventListener?.("keydown", keydownHandler);
 		},
 	});
 	const control = new definition();

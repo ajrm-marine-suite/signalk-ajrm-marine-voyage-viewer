@@ -2,6 +2,10 @@
 
 Signal K webapp for plotting and reviewing AJRM Marine Capture voyage bundles.
 
+Version `0.6.16` cycles overlapping charts with Display's selected keyboard
+shortcut (`C` by default), using the shared browser setting from Map Core
+`0.6.7`.
+
 Version `0.6.15` matches Display's map toolbar button size, shared icons and
 uniform spacing through Map Core `0.6.5`.
 
