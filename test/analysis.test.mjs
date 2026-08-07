@@ -13,16 +13,16 @@ test("voyage downloads defer to Capture portable bundle builder when available",
   assert.match(source, /prepareCaptureVoyageDownload\(app, file\)/);
   assert.match(source, /globalThis\[AJRM_MARINE_CAPTURE_API_REGISTRY\]/);
   assert.match(source, /api\.prepareVoyageDownload\(fileName\)/);
-  assert.match(source, /kind === "voyages"/);
-  assert.match(source, /voyage-viewer-\$\{captureDownload\.fileName\}/);
+  assert.match(source, /router\.get\("\/voyages\/:file\/download"/);
+  assert.match(source, /res\.download\(captureDownload\.path, captureDownload\.fileName/);
   assert.match(source, /captureDownload\.cleanup\(\)/);
-  assert.match(source, /cannot safely download a complete voyage bundle from Voyage Viewer/);
+  assert.match(source, /res\.download\(voyagePath, file\)/);
 });
 
 test("download button lets the browser stream large bundles directly to disk", async () => {
   const source = await fs.readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(source, /function downloadSelectedFile\(event\)/);
-  assert.match(source, /elements\.downloadSelected\.href = downloadUrl\(VOYAGE_KIND, fileName\)/);
+  assert.match(source, /elements\.downloadSelected\.href = downloadUrl\(fileName\)/);
   assert.match(source, /browser will stream it directly to disk/);
   const bundleDownload = source.slice(
     source.indexOf("function downloadSelectedFile"),
@@ -60,7 +60,7 @@ test("publishes suite-facing status and review capability", async () => {
   assert.match(source, /runtimeAnalysisApi: true/);
   assert.match(source, /app\.ajrmMarineVoyageViewerApi = api/);
   assert.match(source, /async analyseVoyage\(fileName\)/);
-  assert.match(source, /analyseFileSource\("voyages", file, options, options\.maxTrackPoints\)/);
+  assert.match(source, /analyseVoyageFile\(file, options, options\.maxTrackPoints\)/);
   assert.match(source, /engineVersion: REVIEW_ENGINE_VERSION/);
 });
 
@@ -180,7 +180,7 @@ test("voyage list includes comment from bundle index", async () => {
           coverage: {
             complete: true,
             preparedComplete: true,
-            lastReason: "end of capture",
+            lastReason: "end of canonical input",
           },
           liveInputIsolation: { valid: true },
         },
@@ -468,7 +468,7 @@ test("reviews report-only BITE voyages with an empty canonical input", async () 
   assert.ok(analysis.review.findings.some((finding) => finding.title === "No own-vessel track"));
 });
 
-test("analyses reference-mode voyage bundles from AJRM Marine Logger files", async () => {
+test("analyses converted canonical voyage bundles", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-reference-"));
   const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-reference-bundle-"));
   const logFile = path.join(dir, "capture-2026-06-22T120000Z.jsonl");
@@ -550,7 +550,7 @@ test("recomputed child review exposes incomplete or contaminated lineage", async
           coverage: {
             complete: true,
             preparedComplete: true,
-            lastReason: "end of capture",
+            lastReason: "end of canonical input",
           },
           liveInputIsolation: {
             valid: false,
@@ -586,41 +586,30 @@ test("verifies durable recomputed completion separately from live-input isolatio
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-verified-recomputed-"));
   const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-verified-recomputed-bundle-"));
   const voyageId = "voyage-recomputed-verified";
-  const captureFileName = "capture-2026-07-30T140000Z.jsonl";
-  const captureRelativePath = path.join("capture", captureFileName);
-  const captureContent = [
+  const outputRelativePath = path.join("recomputed", "output.jsonl");
+  const outputContent = [
     captureRecord("2026-07-30T14:00:00.000Z", 56.0, -5.0, 2),
     captureRecord("2026-07-30T14:01:00.000Z", 56.001, -5.0, 2),
   ].map((record) => JSON.stringify(record)).join("\n");
-  const captureBytes = Buffer.byteLength(captureContent);
-  const segment = {
-    index: 0,
-    fileName: captureFileName,
-    lines: 2,
-    bytes: captureBytes,
-    compressed: false,
-    finalized: true,
-    available: true,
-    error: null,
+  const output = {
+    contract: "ajrm-marine-recomputed-output-v1",
+    schemaVersion: 1,
+    fileName: "recomputed/output.jsonl",
+    records: 2,
+    bytes: Buffer.byteLength(outputContent),
+    writeErrors: 0,
+    complete: true,
   };
   const result = {
+    contract: "ajrm-marine-replay-result-v1",
+    schemaVersion: 1,
+    timing: { valid: true },
     coverage: {
       complete: true,
-      inputComplete: true,
       preparedComplete: true,
-      resultSegmentsComplete: true,
-      lastReason: "end of capture",
+      lastReason: "end of canonical input",
     },
-    resultSegments: {
-      schemaVersion: 1,
-      complete: true,
-      incomplete: false,
-      aborted: false,
-      segmentsTotal: 1,
-      segmentsFinalized: 1,
-      errors: [],
-      segments: [segment],
-    },
+    output,
     liveInputIsolation: {
       valid: true,
       physicalUpdatesSeen: 0,
@@ -636,9 +625,9 @@ test("verifies durable recomputed completion separately from live-input isolatio
     status: "complete",
     result,
   };
-  await fs.mkdir(path.join(bundleDir, "capture"), { recursive: true });
+  await fs.mkdir(path.join(bundleDir, "recomputed"), { recursive: true });
   await fs.mkdir(path.join(bundleDir, "system"), { recursive: true });
-  await fs.writeFile(path.join(bundleDir, captureRelativePath), captureContent);
+  await fs.writeFile(path.join(bundleDir, outputRelativePath), outputContent);
   await fs.writeFile(
     path.join(bundleDir, "index.json"),
     JSON.stringify({
@@ -647,7 +636,7 @@ test("verifies durable recomputed completion separately from live-input isolatio
       recomputationVerified: true,
       startedAt: "2026-07-30T14:00:00.000Z",
       stoppedAt: "2026-07-30T14:01:00.000Z",
-      captureFiles: [captureFileName],
+      recomputedOutput: output,
       recomputedReplay,
     }),
   );
@@ -657,6 +646,7 @@ test("verifies durable recomputed completion separately from live-input isolatio
       contract: "ajrm-marine-recomputed-completion",
       contractVersion: 1,
       voyageId,
+      completionConfirmed: true,
       verified: true,
       recomputationVerified: true,
       recomputedReplay,
@@ -666,7 +656,7 @@ test("verifies durable recomputed completion separately from live-input isolatio
   const zipPath = path.join(dir, `${voyageId}.zip`);
   await writeZip(zipPath, bundleDir, [
     "index.json",
-    captureRelativePath,
+    outputRelativePath,
     "system/recomputed-replay-completion.json",
   ]);
 
@@ -676,7 +666,8 @@ test("verifies durable recomputed completion separately from live-input isolatio
   });
   assert.equal(analysis.replayVerification.checkpointValid, true);
   assert.equal(analysis.replayVerification.coverageComplete, true);
-  assert.equal(analysis.replayVerification.embeddedSegmentsComplete, true);
+  assert.equal(analysis.replayVerification.outputComplete, true);
+  assert.equal(analysis.replayVerification.timingValid, true);
   assert.equal(analysis.replayVerification.completionVerified, true);
   assert.equal(analysis.replayVerification.liveInputIsolationValid, true);
   assert.ok(analysis.review.findings.some((finding) =>
@@ -690,8 +681,6 @@ test("verifies durable recomputed completion separately from live-input isolatio
 });
 
 test("summarises GPS Integrity events from captured Signal K state", async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-gps-integrity-"));
-  const logFile = path.join(dir, "capture-2026-06-22T120000Z.jsonl");
   const records = [
     captureRecord("2026-06-22T12:00:00.000Z", 56.0, -5.0, 2),
     gpsIntegrityRecord("2026-06-22T12:00:00.000Z", {
@@ -785,9 +774,7 @@ test("summarises GPS Integrity events from captured Signal K state", async () =>
       },
     }),
   ];
-  await fs.writeFile(logFile, records.map((record) => JSON.stringify(record)).join("\n"));
-
-  const analysis = await _private.analyseRecording(logFile, { maxTrackPoints: 100 });
+  const analysis = await analyseCanonicalRecords(records, "gps-integrity");
 
   assert.equal(analysis.gpsIntegrity.samples, 4);
   assert.equal(analysis.summary.gpsIntegrity.available, true);
@@ -1308,20 +1295,16 @@ test("analyses multiple voyage notes and captured routes", async () => {
   assert.equal(analysis.routes[0].points.length, 2);
 });
 
-test("analyses raw AJRM Marine Logger jsonl recordings", async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-"));
-  const file = path.join(dir, "capture-20260622T120000Z.jsonl");
+test("analyses a canonical voyage track", async () => {
   const records = [
     captureRecord("2026-06-22T12:00:00.000Z", 56.0, -5.0, 2),
     captureRecord("2026-06-22T12:10:00.000Z", 56.00833, -5.0, 3),
   ];
-  await fs.writeFile(file, records.map((record) => JSON.stringify(record)).join("\n"));
-  const analysis = await _private.analyseRecording(file, { kind: "logs", maxTrackPoints: 100 });
-  assert.equal(analysis.sourceKind, "logs");
-  assert.equal(analysis.fileName, "capture-20260622T120000Z.jsonl");
+  const analysis = await analyseCanonicalRecords(records, "track");
+  assert.equal(analysis.sourceKind, "voyages");
   assert.equal(analysis.summary.trackPoints, 2);
   assert.ok(analysis.summary.distanceNm > 0.49 && analysis.summary.distanceNm < 0.51);
-  assert.match(analysis.gpxUrl, /\/files\/logs\/capture-20260622T120000Z\.jsonl\/track\.gpx$/);
+  assert.match(analysis.gpxUrl, /\/voyages\/voyage-track\.zip\/track\.gpx$/);
 });
 
 test("analyses explicitly declared completed recomputed output", async () => {
@@ -1366,8 +1349,6 @@ test("analyses explicitly declared completed recomputed output", async () => {
 });
 
 test("summarises engaged pilot helm bias and excludes standby TP32 positions", async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-instruments-"));
-  const file = path.join(dir, "capture-20260802T120000Z.jsonl");
   const rudderDegrees = [-12, -8, -4, 30];
   const waterCelsius = [10, 12, 14, 12];
   const records = [captureRecord(
@@ -1383,9 +1364,7 @@ test("summarises engaged pilot helm bias and excludes standby TP32 positions", a
     3,
     { rudderAngle, waterCelsius: waterCelsius[index], autopilotState: index === 3 ? "wind" : "heading" },
   ))];
-  await fs.writeFile(file, records.map((record) => JSON.stringify(record)).join("\n"));
-
-  const analysis = await _private.analyseRecording(file, { kind: "logs", maxTrackPoints: 100 });
+  const analysis = await analyseCanonicalRecords(records, "instruments");
 
   assert.equal(analysis.summary.rudder.available, true);
   assert.equal(analysis.summary.rudder.sampleCount, 4);
@@ -1402,51 +1381,21 @@ test("summarises engaged pilot helm bias and excludes standby TP32 positions", a
   assert.ok(Math.abs(analysis.summary.waterTemperature.maximumCelsius - 14) < 1e-9);
 });
 
-test("caches plot analysis beside the source recording", async () => {
+test("caches plot analysis beside the voyage bundle", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-cache-"));
-  const fileName = "capture-20260622T120000Z.jsonl";
-  const file = path.join(dir, fileName);
+  const fileName = "voyage-cache.zip";
   const records = [
     captureRecord("2026-06-22T12:00:00.000Z", 56.0, -5.0, 2),
     captureRecord("2026-06-22T12:10:00.000Z", 56.00833, -5.0, 3),
   ];
-  await fs.writeFile(file, records.map((record) => JSON.stringify(record)).join("\n"));
-  const options = {
-    voyageDirectory: dir,
-    logDirectory: dir,
-  };
-  const first = await _private.analyseFileSource("logs", fileName, options, 100);
+  const file = await writeCanonicalVoyage(dir, fileName, records);
+  const options = { voyageDirectory: dir };
+  const first = await _private.analyseVoyageFile(fileName, options, 100);
   assert.equal(first.cache, undefined);
   const cachePath = _private.plotCachePath(file);
   const stat = await fs.stat(cachePath);
   assert.ok(stat.size > 0);
-  const second = await _private.analyseFileSource("logs", fileName, options, 100);
-  assert.equal(second.cache.hit, true);
-  assert.equal(second.summary.trackPoints, 2);
-});
-
-test("accepts legacy plot cache sidecars", async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-viewer-cache-legacy-"));
-  const fileName = "capture-20260622T120000Z.jsonl";
-  const file = path.join(dir, fileName);
-  const records = [
-    captureRecord("2026-06-22T12:00:00.000Z", 56.0, -5.0, 2),
-    captureRecord("2026-06-22T12:10:00.000Z", 56.00833, -5.0, 3),
-  ];
-  await fs.writeFile(file, records.map((record) => JSON.stringify(record)).join("\n"));
-  const options = {
-    voyageDirectory: dir,
-    logDirectory: dir,
-  };
-  const first = await _private.analyseFileSource("logs", fileName, options, 100);
-  const cachePath = _private.plotCachePath(file);
-  const legacyPath = _private.legacyPlotCachePath(file);
-  const cache = JSON.parse(await fs.readFile(cachePath, "utf8"));
-  cache.schema = ["watch", "keeper.plot-cache.v1"].join("");
-  await fs.rm(cachePath);
-  await fs.writeFile(legacyPath, `${JSON.stringify(cache)}\n`);
-  const second = await _private.analyseFileSource("logs", fileName, options, 100);
-  assert.equal(first.summary.trackPoints, 2);
+  const second = await _private.analyseVoyageFile(fileName, options, 100);
   assert.equal(second.cache.hit, true);
   assert.equal(second.summary.trackPoints, 2);
 });
@@ -1623,11 +1572,72 @@ function trafficEvent({ eventId, label, title, mmsi, message, vesselSize = "unkn
   };
 }
 
+async function analyseCanonicalRecords(records, name) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), `voyage-viewer-${name}-`));
+  const fileName = `voyage-${name}.zip`;
+  const zipPath = await writeCanonicalVoyage(dir, fileName, records);
+  return _private.analyseVoyage(zipPath, { maxTrackPoints: 100 });
+}
+
+async function writeCanonicalVoyage(dir, fileName, records) {
+  const bundleDir = path.join(dir, `${fileName}.bundle`);
+  await fs.mkdir(path.join(bundleDir, "input"), { recursive: true });
+  await fs.writeFile(
+    path.join(bundleDir, "input", "yden-input.jsonl"),
+    records.map((record) => JSON.stringify(record)).join("\n"),
+  );
+  await fs.writeFile(path.join(bundleDir, "index.json"), JSON.stringify({
+    id: fileName.replace(/\.zip$/i, ""),
+    startedAt: records[0]?.capturedAt || null,
+    stoppedAt: records.at(-1)?.capturedAt || null,
+    canonicalInput: {
+      contract: "ajrm-marine-canonical-input-v1",
+      schemaVersion: 1,
+      fileName: "input/yden-input.jsonl",
+      complete: true,
+    },
+  }));
+  const zipPath = path.join(dir, fileName);
+  await writeZip(zipPath, bundleDir, ["index.json", "input/yden-input.jsonl"]);
+  return zipPath;
+}
+
 async function writeZip(zipPath, rootDir, relativePaths) {
   const zip = new AdmZip();
+  const indexPath = path.join(rootDir, "index.json");
+  let index = relativePaths.includes("index.json")
+    ? JSON.parse(await fs.readFile(indexPath, "utf8"))
+    : null;
+  if (index && !index.canonicalInput && !index.recomputedOutput) {
+    const sourcePaths = [
+      ...(index.captureReferences || []).map((reference) => reference.sourcePath),
+      ...(index.captureFiles || []).map((fileName) => path.join(rootDir, "capture", fileName)),
+    ].filter(Boolean);
+    if (sourcePaths.length) {
+      const chunks = await Promise.all(sourcePaths.map((sourcePath) => fs.readFile(sourcePath)));
+      const canonical = Buffer.concat(chunks.map((chunk, position) =>
+        position === chunks.length - 1 || chunk.at(-1) === 10
+          ? chunk
+          : Buffer.concat([chunk, Buffer.from("\n")])
+      ));
+      zip.addFile("input/yden-input.jsonl", canonical);
+      index = {
+        ...index,
+        canonicalInput: {
+          contract: "ajrm-marine-canonical-input-v1",
+          schemaVersion: 1,
+          fileName: "input/yden-input.jsonl",
+          bytes: canonical.length,
+          complete: true,
+        },
+      };
+    }
+  }
   for (const relativePath of relativePaths) {
     const zipPathName = relativePath.split(path.sep).join("/");
-    const data = await fs.readFile(path.join(rootDir, relativePath));
+    const data = relativePath === "index.json" && index
+      ? Buffer.from(JSON.stringify(index))
+      : await fs.readFile(path.join(rootDir, relativePath));
     zip.addFile(zipPathName, data);
   }
   zip.writeZip(zipPath);

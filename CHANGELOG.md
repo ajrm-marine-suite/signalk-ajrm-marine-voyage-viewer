@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0 - 2026-08-07
+
+- Make current self-contained Capture bundles the only supported voyage input.
+- Remove raw-log, Clips, embedded-segment and external-Logger runtime fallbacks.
+- Replace generic file-kind routes with a voyage-only REST API and OpenAPI description.
+- Validate current recomputed replay result, timing, checkpoint and embedded output contracts.
+- Remove legacy plot-cache sidecar support.
+
 ## 0.6.22
 
 - Make the bundled Map Core integrity test portable across LF and CRLF

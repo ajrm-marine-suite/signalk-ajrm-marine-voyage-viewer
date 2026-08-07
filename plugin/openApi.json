@@ -1,0 +1,60 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AJRM Marine Voyage Viewer API",
+    "version": "0.7.0",
+    "description": "Lists, analyses, downloads and exports self-contained AJRM Marine Capture voyage bundles."
+  },
+  "servers": [
+    { "url": "/plugins/signalk-ajrm-marine-voyage-viewer" }
+  ],
+  "paths": {
+    "/status": {
+      "get": { "summary": "Get Voyage Viewer status", "responses": { "200": { "description": "Current plugin status" } } }
+    },
+    "/voyages": {
+      "get": { "summary": "List voyage bundles", "responses": { "200": { "description": "Available self-contained voyages" } } }
+    },
+    "/voyages/{file}/analysis-progress": {
+      "get": {
+        "summary": "Get analysis progress",
+        "parameters": [{ "$ref": "#/components/parameters/VoyageFile" }],
+        "responses": { "200": { "description": "Analysis progress" } }
+      }
+    },
+    "/voyages/{file}/download": {
+      "get": {
+        "summary": "Download a voyage bundle",
+        "parameters": [{ "$ref": "#/components/parameters/VoyageFile" }],
+        "responses": { "200": { "description": "Voyage ZIP" } }
+      }
+    },
+    "/voyages/{file}/analyse": {
+      "post": {
+        "summary": "Analyse a voyage bundle",
+        "parameters": [{ "$ref": "#/components/parameters/VoyageFile" }],
+        "responses": { "200": { "description": "Voyage analysis" } }
+      }
+    },
+    "/voyages/{file}/track.gpx": {
+      "get": {
+        "summary": "Export the voyage track as GPX",
+        "parameters": [{ "$ref": "#/components/parameters/VoyageFile" }],
+        "responses": { "200": { "description": "GPX track" } }
+      }
+    },
+    "/charts": {
+      "get": { "summary": "List Signal K chart resources", "responses": { "200": { "description": "Chart resources" } } }
+    }
+  },
+  "components": {
+    "parameters": {
+      "VoyageFile": {
+        "name": "file",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "pattern": "^[^/]+\\.zip$" }
+      }
+    }
+  }
+}

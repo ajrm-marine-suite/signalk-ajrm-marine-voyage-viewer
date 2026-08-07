@@ -58,7 +58,6 @@ let seamarkLayer;
 const chartLayerZIndex = 450;
 const seamarkLayerZIndex = 650;
 let progressTimer = null;
-const VOYAGE_KIND = "voyages";
 let currentFiles = [];
 let selectedFile = null;
 let plottedBounds = null;
@@ -430,8 +429,8 @@ async function loadFiles() {
   elements.statusLine.textContent = "Loading voyages…";
   elements.voyageList.innerHTML = "";
   try {
-    const data = await requestJson(`${apiBase}/files/${VOYAGE_KIND}`);
-    currentFiles = data.files || [];
+    const data = await requestJson(`${apiBase}/voyages`);
+    currentFiles = data.voyages || [];
     renderFiles(currentFiles);
   } catch (error) {
     elements.statusLine.textContent = error.message;
@@ -492,9 +491,9 @@ function updateSelection() {
   elements.selectedDetails.textContent = selectedFile.comment
     ? `${selectedFile.fileName} · ${selectedFile.comment} · ${fileMeta(selectedFile)}`
     : `${selectedFile.fileName} · ${fileMeta(selectedFile)}`;
-  elements.downloadSelected.href = downloadUrl(VOYAGE_KIND, selectedFile.fileName);
+  elements.downloadSelected.href = downloadUrl(selectedFile.fileName);
   elements.downloadSelected.download = selectedFile.fileName;
-  elements.downloadGpx.href = gpxUrl(VOYAGE_KIND, selectedFile.fileName);
+  elements.downloadGpx.href = gpxUrl(selectedFile.fileName);
   elements.downloadGpx.download = gpxFileName(selectedFile.fileName);
 }
 
@@ -525,15 +524,15 @@ function clearPlottedLayers() {
 
 async function analyseSelectedFile() {
   if (!selectedFile) return;
-  await analyseFile(VOYAGE_KIND, selectedFile.fileName, { plot: true });
+  await analyseFile(selectedFile.fileName, { plot: true });
 }
 
 async function reviewSelectedFile() {
   if (!selectedFile) return;
-  await analyseFile(VOYAGE_KIND, selectedFile.fileName, { plot: false });
+  await analyseFile(selectedFile.fileName, { plot: false });
 }
 
-async function analyseFile(kind, fileName, { plot = true } = {}) {
+async function analyseFile(fileName, { plot = true } = {}) {
   const requestId = ++analysisRequestId;
   clearPlottedLayers();
   plottedBounds = null;
@@ -543,7 +542,7 @@ async function analyseFile(kind, fileName, { plot = true } = {}) {
   elements.statusLine.textContent = plot ? `Analysing ${fileName}…` : `Reviewing ${fileName}…`;
   try {
     const data = await requestJson(
-      `${apiBase}/files/${encodeURIComponent(kind)}/${encodeURIComponent(fileName)}/analyse`,
+      `${apiBase}/voyages/${encodeURIComponent(fileName)}/analyse`,
       { method: "POST" },
     );
     if (requestId !== analysisRequestId || selectedFile?.fileName !== fileName) {
@@ -571,11 +570,10 @@ function startPlotProgress(fileName) {
   clearInterval(progressTimer);
   elements.plotProgress.classList.remove("hidden", "failed");
   setPlotProgress(0, `Opening ${fileName}…`);
-  const kind = VOYAGE_KIND;
   progressTimer = setInterval(async () => {
     try {
       const response = await fetch(
-        analysisProgressUrl(kind, fileName),
+        analysisProgressUrl(fileName),
         {
           cache: "no-store",
           headers: { Accept: "application/json" },
@@ -650,7 +648,7 @@ async function exportSelectedGpx(event) {
   startExportProgress(fileName);
   showDownloadFeedback(elements.downloadGpx, "Preparing…");
   try {
-    const response = await fetch(gpxUrl(VOYAGE_KIND, fileName), { headers: { Accept: "application/gpx+xml" } });
+    const response = await fetch(gpxUrl(fileName), { headers: { Accept: "application/gpx+xml" } });
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       throw new Error(text || response.statusText || "GPX export failed");
@@ -672,7 +670,7 @@ function downloadSelectedFile(event) {
     return;
   }
   const fileName = selectedFile.fileName;
-  elements.downloadSelected.href = downloadUrl(VOYAGE_KIND, fileName);
+  elements.downloadSelected.href = downloadUrl(fileName);
   showDownloadFeedback(elements.downloadSelected, "Downloading…");
   showToast(
     `Downloading ${fileName}. The browser will stream it directly to disk.`,
@@ -845,7 +843,7 @@ function renderSummary(analysis) {
   const gpsIntegrity = analysis.gpsIntegrity || summary.gpsIntegrity;
   elements.summaryTitle.textContent = analysis.fileName || analysis.id || "Voyage";
   elements.summarySubtitle.textContent = `${formatDateTime(summary.startedAt)} → ${formatDateTime(summary.stoppedAt)}`;
-  elements.downloadGpx.href = analysis.gpxUrl || gpxUrl(VOYAGE_KIND, analysis.fileName);
+  elements.downloadGpx.href = analysis.gpxUrl || gpxUrl(analysis.fileName);
   elements.downloadGpx.download = gpxFileNameFromAnalysis(analysis);
   setLinkEnabled(elements.downloadGpx, true);
   elements.comment.textContent = "";
@@ -977,7 +975,7 @@ function replayLineageSummary(replay) {
     replay.coverage &&
     replay.coverage.complete === true &&
     replay.coverage.preparedComplete === true &&
-    replay.coverage.lastReason === "end of capture";
+    replay.coverage.lastReason === "end of canonical input";
   if (!complete) return "incomplete coverage";
   if (replay.liveInputIsolation && replay.liveInputIsolation.valid === false) {
     return "live-input contamination detected";
@@ -1176,16 +1174,16 @@ function renderVoyageNotes(observations) {
   }
 }
 
-function gpxUrl(kind, fileName) {
-  return `${apiBase}/files/${encodeURIComponent(kind)}/${encodeURIComponent(fileName)}/track.gpx`;
+function gpxUrl(fileName) {
+  return `${apiBase}/voyages/${encodeURIComponent(fileName)}/track.gpx`;
 }
 
-function downloadUrl(kind, fileName) {
-  return `${apiBase}/files/${encodeURIComponent(kind)}/${encodeURIComponent(fileName)}/download`;
+function downloadUrl(fileName) {
+  return `${apiBase}/voyages/${encodeURIComponent(fileName)}/download`;
 }
 
-function analysisProgressUrl(kind, fileName) {
-  return `${apiBase}/files/${encodeURIComponent(kind)}/${encodeURIComponent(fileName)}/analysis-progress`;
+function analysisProgressUrl(fileName) {
+  return `${apiBase}/voyages/${encodeURIComponent(fileName)}/analysis-progress`;
 }
 
 function gpxFileName(fileName) {

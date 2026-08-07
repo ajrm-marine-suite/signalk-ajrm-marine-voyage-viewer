@@ -6,12 +6,19 @@ Signal K webapp for plotting and reviewing AJRM Marine Capture voyage bundles.
 
 ```bash
 cd ~/.signalk
-npm install git+https://github.com/ajrm-marine-suite/signalk-ajrm-marine-voyage-viewer.git#v0.6.22 --omit=dev --no-package-lock
+npm install git+https://github.com/ajrm-marine-suite/signalk-ajrm-marine-voyage-viewer.git#v0.7.0 --omit=dev --no-package-lock
 sudo systemctl restart signalk
 ```
 
 Enable **AJRM Marine Voyage Viewer** in Signal K. Capture supplies the voyage
 list, canonical data, notes, routes, and diagnostic evidence.
+
+Version `0.7.0` makes the current self-contained Capture bundle the only
+supported input. It removes the hidden raw-log, Clips, embedded-segment and
+external-Logger fallbacks, replaces the generic file-kind HTTP routes with a
+voyage-only API, documents that API with OpenAPI, and validates recomputed
+voyages against Capture's current replay-result, timing, checkpoint and output
+contracts.
 
 Version `0.6.20` adds visible hover/focus help to every map control icon,
 including zoom, chart selection, chart cycling and voyage actions.
@@ -49,15 +56,15 @@ Version `0.6.11` adopts the shared AJRM Marine map controls: Display-style
 basemap and overlay selection, nested Charts Provider Simple folder toggles,
 and a chart-cycle button for overlapping charts.
 
-The app now lists voyages only. Any selected voyage can be plotted on a Leaflet
-chart, reviewed, exported as GPX 1.1, or downloaded. Individual Logger files
-and the retired Clips workflow are no longer exposed in the user interface.
+The app lists voyages only. Any selected voyage can be plotted on a Leaflet
+chart, reviewed, exported as GPX 1.1, or downloaded.
 
 Current Capture bundles declare one canonical physical-input stream using the
 `ajrm-marine-canonical-input-v1` contract at `input/yden-input.jsonl`. Voyage
-Viewer reads that declared stream directly. Legacy embedded capture segments
-and exact external Logger references remain an internal compatibility path for
-older voyage bundles, without restoring separate Logs or Clips lists.
+Viewer reads that declared stream directly. Recomputed children instead
+declare a complete `ajrm-marine-recomputed-output-v1` stream. Bundles that do
+not contain one of those current contracts should be converted once rather
+than making the runtime carry historical storage formats.
 
 Current Capture deliberately separates evidence by purpose. Voyage Viewer
 reads physical navigation and instrument data from the declared canonical
@@ -72,8 +79,7 @@ explicit comparison availability, GPS-dependence, leeway/current origin, input
 sources, and the accepted Navigation Reference clock source. Voyage Viewer
 renders those provider decisions without selecting sensor sources or
 recalculating navigation policy. An integrity track is not drawn when GPS
-Integrity explicitly records `comparisonAvailable: false`; legacy records that
-do not contain the field remain reviewable.
+Integrity explicitly records `comparisonAvailable: false`.
 
 For recomputed child voyages, the file list, analysis summary, and Voyage
 Review expose the parent voyage, resolved replay-source lineage, cumulative
@@ -82,8 +88,8 @@ detected live-sensor contamination is shown as a red software finding rather
 than being reviewed as an ordinary clean voyage.
 
 Current builds also verify Capture's durable recomputation-completion
-checkpoint, replay coverage, result-segment manifest, and the presence and
-byte size of every embedded result segment. Packaging/completion verification
+checkpoint, replay coverage, explicit timing validity, and the contract,
+completion state and byte size of the embedded recomputed output. Packaging/completion verification
 is reported separately from live-input isolation, so a complete bundle still
 preserves any historical contamination finding rather than conflating the two.
 
@@ -123,10 +129,6 @@ Version `0.1.16` refreshes Auto Charts using Signal K chart resources directly
 and uses voyage duration to show steadier progress while
 long captures are scanned.
 
-Version `0.1.15` added support for old reference-mode voyage bundles by reading
-their referenced AJRM Marine Logger files when those files still exist on the
-server.
-
 Select a voyage, then use Plot, Review, Export GPX, or Download.
 
 ## GPX export
@@ -149,7 +151,7 @@ webapp opening the chart resource API first.
 
 Voyage analysis runs on the Signal K server. The webapp shows a staged
 horizontal progress bar driven by actual server-side byte and phase progress
-while it opens the voyage, scans the canonical or legacy capture data, finds the
+while it opens the voyage, scans the declared bundle data, finds the
 track, computes the summary, and renders the chart overlay or GPX download.
 
 ## Plot cache

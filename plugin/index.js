@@ -10,15 +10,9 @@ const packageInfo = require("../package.json");
 
 const MPS_TO_KNOTS = 1.9438444924406046;
 const METERS_TO_NM = 1 / 1852;
-const DEFAULT_LOG_ROOT = "~/AJRMMarineLogs";
-const DEFAULT_VOYAGE_DIRECTORY = `${DEFAULT_LOG_ROOT}/voyages`;
-const DEFAULT_LOG_DIRECTORY = `${DEFAULT_LOG_ROOT}/captures`;
-const LEGACY_LOG_ROOT = ["~/Capture", "PlusLogs"].join("");
-const LEGACY_VOYAGE_DIRECTORY = `${LEGACY_LOG_ROOT}/voyages`;
-const LEGACY_LOG_DIRECTORY = `${LEGACY_LOG_ROOT}/captures`;
+const DEFAULT_VOYAGE_DIRECTORY = "~/AJRMMarineLogs/voyages";
 const MAX_TRACK_POINTS = 6000;
 const PLOT_CACHE_SCHEMA = "ajrm-marine.plot-cache.v2";
-const LEGACY_PLOT_CACHE_SCHEMA = ["watch", "keeper.plot-cache.v1"].join("");
 const REVIEW_SCHEMA_VERSION = 2;
 const REVIEW_ENGINE_VERSION = 17;
 const CANONICAL_INPUT_CONTRACT = "ajrm-marine-canonical-input-v1";
@@ -70,7 +64,7 @@ module.exports = function ajrmMarineVoyageViewer(app) {
       status: () => statusPayload(),
       async analyseVoyage(fileName) {
         const file = safeVoyageFile(fileName);
-        return analyseFileSource("voyages", file, options, options.maxTrackPoints);
+        return analyseVoyageFile(file, options, options.maxTrackPoints);
       },
     };
     app.ajrmMarineVoyageViewerApi = api;
@@ -88,6 +82,8 @@ module.exports = function ajrmMarineVoyageViewer(app) {
     }
   };
 
+  plugin.getOpenApi = () => require("./openApi.json");
+
   plugin.registerWithRouter = function registerWithRouter(router) {
     router.get("/status", (_req, res) => {
       res.json(statusPayload());
@@ -102,49 +98,32 @@ module.exports = function ajrmMarineVoyageViewer(app) {
       }
     });
 
-    router.get("/files/:kind", async (req, res) => {
+    router.get("/voyages/:file/analysis-progress", (req, res) => {
       try {
-        const kind = safeFileKind(req.params.kind);
-        res.json({ ok: true, kind, files: await listFilesForKind(kind, options) });
-      } catch (error) {
-        app.error(`[${plugin.id}] list files failed: ${error.stack || error.message}`);
-        res.status(500).json({ ok: false, error: error.message });
-      }
-    });
-
-    router.get("/files/:kind/:file/analysis-progress", (req, res) => {
-      try {
-        const kind = safeFileKind(req.params.kind);
-        const file = safeFileNameForKind(kind, req.params.file);
+        const file = safeVoyageFile(req.params.file);
         res.json({
           ok: true,
-          progress:
-            analysisProgress.get(analysisProgressKey(kind, file)) ||
-            idleAnalysisProgress(kind, file),
+          progress: analysisProgress.get(file) || idleAnalysisProgress(file),
         });
       } catch (error) {
         res.status(400).json({ ok: false, error: error.message });
       }
     });
 
-    router.get("/files/:kind/:file/download", async (req, res) => {
+    router.get("/voyages/:file/download", async (req, res) => {
       let captureDownload = null;
       try {
-        const kind = safeFileKind(req.params.kind);
-        const file = safeFileNameForKind(kind, req.params.file);
-        if (kind === "voyages") {
-          captureDownload = await prepareCaptureVoyageDownload(app, file);
-          if (captureDownload) {
-            res.download(captureDownload.path, `voyage-viewer-${captureDownload.fileName}`, () => {
-              captureDownload.cleanup().catch(() => {});
-            });
-            return;
-          }
-          throw new Error("AJRM Marine Capture portable download API is unavailable; cannot safely download a complete voyage bundle from Voyage Viewer.");
+        const file = safeVoyageFile(req.params.file);
+        captureDownload = await prepareCaptureVoyageDownload(app, file);
+        if (captureDownload) {
+          res.download(captureDownload.path, captureDownload.fileName, () => {
+            captureDownload.cleanup().catch(() => {});
+          });
+          return;
         }
-        const filePath = path.join(directoryForKind(kind, options), file);
-        await assertReadableFile(filePath);
-        res.download(filePath, file);
+        const voyagePath = path.join(expandHome(options.voyageDirectory), file);
+        await assertReadableFile(voyagePath);
+        res.download(voyagePath, file);
       } catch (error) {
         if (captureDownload) captureDownload.cleanup().catch(() => {});
         app.error(`[${plugin.id}] download failed: ${error.stack || error.message}`);
@@ -166,48 +145,27 @@ module.exports = function ajrmMarineVoyageViewer(app) {
     });
 
     router.post("/voyages/:file/analyse", async (req, res) => {
-      try {
-        const file = safeVoyageFile(req.params.file);
-        const analysis = await analyseFileSource("voyages", file, options, options.maxTrackPoints);
-        res.json({ ok: true, analysis });
-      } catch (error) {
-        app.error(`[${plugin.id}] analyse failed: ${error.stack || error.message}`);
-        res.status(500).json({ ok: false, error: error.message });
-      }
-    });
-
-    router.post("/files/:kind/:file/analyse", async (req, res) => {
       let progressKey = null;
       try {
-        const kind = safeFileKind(req.params.kind);
-        const file = safeFileNameForKind(kind, req.params.file);
-        progressKey = analysisProgressKey(kind, file);
+        const file = safeVoyageFile(req.params.file);
+        progressKey = file;
         setAnalysisProgress(analysisProgress, progressKey, {
-          kind,
           fileName: file,
           state: "running",
           phase: "opening",
           percent: 0,
           message: `Opening ${file}`,
         });
-        const analysis = await analyseFileSource(
-          kind,
-          file,
-          options,
-          options.maxTrackPoints,
-          {
+        const analysis = await analyseVoyageFile(file, options, options.maxTrackPoints, {
             onProgress(progress) {
               setAnalysisProgress(analysisProgress, progressKey, {
-                kind,
                 fileName: file,
                 state: "running",
                 ...progress,
               });
             },
-          },
-        );
+          });
         setAnalysisProgress(analysisProgress, progressKey, {
-          kind,
           fileName: file,
           state: "complete",
           phase: "complete",
@@ -225,7 +183,7 @@ module.exports = function ajrmMarineVoyageViewer(app) {
             error: error.message,
           });
         }
-        app.error(`[${plugin.id}] analyse file failed: ${error.stack || error.message}`);
+        app.error(`[${plugin.id}] analyse voyage failed: ${error.stack || error.message}`);
         res.status(500).json({ ok: false, error: error.message });
       }
     });
@@ -233,23 +191,13 @@ module.exports = function ajrmMarineVoyageViewer(app) {
     router.get("/voyages/:file/track.gpx", async (req, res) => {
       try {
         const file = safeVoyageFile(req.params.file);
-        await sendGpxForSource(res, "voyages", file, options);
+        await sendVoyageGpx(res, file, options);
       } catch (error) {
         app.error(`[${plugin.id}] GPX export failed: ${error.stack || error.message}`);
         res.status(500).json({ ok: false, error: error.message });
       }
     });
 
-    router.get("/files/:kind/:file/track.gpx", async (req, res) => {
-      try {
-        const kind = safeFileKind(req.params.kind);
-        const file = safeFileNameForKind(kind, req.params.file);
-        await sendGpxForSource(res, kind, file, options);
-      } catch (error) {
-        app.error(`[${plugin.id}] file GPX export failed: ${error.stack || error.message}`);
-        res.status(500).json({ ok: false, error: error.message });
-      }
-    });
   };
 
   function statusPayload() {
@@ -300,31 +248,9 @@ async function prepareCaptureVoyageDownload(app, fileName) {
 
 function normalizeOptions(value = {}) {
   return {
-    voyageDirectory: String(value.voyageDirectory || defaultDirectory(DEFAULT_VOYAGE_DIRECTORY, LEGACY_VOYAGE_DIRECTORY)),
-    // Retained internally only so old reference-mode voyage bundles can still
-    // resolve exact Logger files. Logs are no longer exposed for direct review.
-    logDirectory: String(value.logDirectory || defaultDirectory(DEFAULT_LOG_DIRECTORY, LEGACY_LOG_DIRECTORY)),
+    voyageDirectory: String(value.voyageDirectory || DEFAULT_VOYAGE_DIRECTORY),
     maxTrackPoints: clampInteger(value.maxTrackPoints, 500, 50000, MAX_TRACK_POINTS),
   };
-}
-
-function defaultDirectory(preferredDirectory, legacyDirectory) {
-  const preferred = expandHome(preferredDirectory);
-  const legacy = expandHome(legacyDirectory);
-  return !fs.existsSync(preferred) && fs.existsSync(legacy) ? legacyDirectory : preferredDirectory;
-}
-
-function directoryForKind(kind, currentOptions) {
-  if (kind === "voyages") return expandHome(currentOptions.voyageDirectory);
-  // Internal compatibility only: legacy voyage bundles may still resolve or
-  // analyse exact Logger sources. safeFileKind() prevents direct HTTP access.
-  if (kind === "logs") return expandHome(currentOptions.logDirectory);
-  throw new Error(`Unsupported file kind: ${kind}`);
-}
-
-async function listFilesForKind(kind, currentOptions) {
-  if (kind !== "voyages") throw new Error(`Unsupported file kind: ${kind}`);
-  return listVoyages(currentOptions.voyageDirectory);
 }
 
 async function listVoyages(voyageDirectory) {
@@ -372,41 +298,10 @@ async function readVoyageIndexSummary(voyagePath) {
   }
 }
 
-async function listRecordings(directory) {
-  const dir = expandHome(directory);
-  const entries = await fs.promises.readdir(dir, { withFileTypes: true }).catch((error) => {
-    if (error.code === "ENOENT") return [];
-    throw error;
-  });
-  const recordings = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !/\.jsonl(\.gz)?$/i.test(entry.name)) continue;
-    const stat = await fs.promises.stat(path.join(dir, entry.name));
-    recordings.push({
-      fileName: entry.name,
-      bytes: stat.size,
-      modifiedAt: stat.mtime.toISOString(),
-      startedAt: recordingStartedAtFromFileName(entry.name),
-      compressed: entry.name.endsWith(".gz"),
-    });
-  }
-  recordings.sort((left, right) => right.modifiedAt.localeCompare(left.modifiedAt));
-  return recordings;
-}
-
-function sourcePathForKind(kind, file, currentOptions) {
-  return path.join(directoryForKind(kind, currentOptions), file);
-}
-
-function analysisProgressKey(kind, file) {
-  return `${kind}:${file}`;
-}
-
-function idleAnalysisProgress(kind, fileName) {
+function idleAnalysisProgress(fileName) {
   return {
     contract: "ajrm-marine-voyage-analysis-progress",
     contractVersion: 1,
-    kind,
     fileName,
     state: "idle",
     phase: "idle",
@@ -445,18 +340,17 @@ function clampProgressPercent(value) {
     : 0;
 }
 
-async function analyseFileSource(
-  kind,
+async function analyseVoyageFile(
   file,
   currentOptions,
   maxTrackPoints,
   { useCache = true, onProgress = null } = {},
 ) {
-  const sourcePath = sourcePathForKind(kind, file, currentOptions);
+  const sourcePath = path.join(expandHome(currentOptions.voyageDirectory), file);
   const source = await sourceFingerprint(sourcePath);
   emitAnalysisProgress(onProgress, 2, "opening", `Opened ${file}`);
   if (useCache && isPlotCacheable(maxTrackPoints)) {
-    const cached = await readFreshPlotCache(sourcePath, source, kind, file, maxTrackPoints);
+    const cached = await readFreshPlotCache(sourcePath, source, file, maxTrackPoints);
     if (cached) {
       emitAnalysisProgress(onProgress, 100, "complete", "Loaded cached voyage analysis", {
         cacheHit: true,
@@ -464,16 +358,10 @@ async function analyseFileSource(
       return cached;
     }
   }
-  const analysis = kind === "voyages"
-    ? await analyseVoyage(sourcePath, {
-        maxTrackPoints,
-        options: currentOptions,
-        onProgress,
-      })
-    : await analyseRecording(sourcePath, { kind, maxTrackPoints, onProgress });
+  const analysis = await analyseVoyage(sourcePath, { maxTrackPoints, onProgress });
   if (useCache && isPlotCacheable(maxTrackPoints)) {
     emitAnalysisProgress(onProgress, 97, "caching", "Saving voyage analysis cache");
-    await writePlotCache(sourcePath, source, kind, file, maxTrackPoints, analysis);
+    await writePlotCache(sourcePath, source, file, maxTrackPoints, analysis);
   }
   emitAnalysisProgress(onProgress, 100, "complete", "Voyage analysis complete");
   return analysis;
@@ -499,34 +387,23 @@ function plotCachePath(sourcePath) {
   return `${sourcePath}.ajrm-marine-plot.json`;
 }
 
-function legacyPlotCachePath(sourcePath) {
-  return `${sourcePath}.${["watch", "keeper-plot"].join("")}.json`;
-}
-
 function gpxCachePath(sourcePath) {
   return `${sourcePath}.gpx`;
 }
 
-async function readFreshPlotCache(sourcePath, source, kind, file, maxTrackPoints) {
-  for (const cachePath of [plotCachePath(sourcePath), legacyPlotCachePath(sourcePath)]) {
-    const cache = await readPlotCacheFile(cachePath);
-    if (!cache) continue;
-    if (cache.schema !== PLOT_CACHE_SCHEMA && cache.schema !== LEGACY_PLOT_CACHE_SCHEMA) continue;
-    if (cache.source?.kind !== kind || cache.source?.fileName !== file) continue;
-    if (cache.source?.bytes !== source.bytes || cache.source?.mtimeMs !== source.mtimeMs) continue;
-    if (Number(cache.options?.maxTrackPoints) !== Number(maxTrackPoints)) continue;
-    if (!cache.analysis || typeof cache.analysis !== "object") continue;
-    if (cache.analysis.review?.schemaVersion !== REVIEW_SCHEMA_VERSION) continue;
-    if (Number(cache.analysis.review?.engineVersion || 0) < REVIEW_ENGINE_VERSION) continue;
-    return {
-      ...cache.analysis,
-      cache: {
-        hit: true,
-        generatedAt: cache.generatedAt || null,
-      },
-    };
-  }
-  return null;
+async function readFreshPlotCache(sourcePath, source, file, maxTrackPoints) {
+  const cache = await readPlotCacheFile(plotCachePath(sourcePath));
+  if (!cache || cache.schema !== PLOT_CACHE_SCHEMA) return null;
+  if (cache.source?.fileName !== file) return null;
+  if (cache.source?.bytes !== source.bytes || cache.source?.mtimeMs !== source.mtimeMs) return null;
+  if (Number(cache.options?.maxTrackPoints) !== Number(maxTrackPoints)) return null;
+  if (!cache.analysis || typeof cache.analysis !== "object") return null;
+  if (cache.analysis.review?.schemaVersion !== REVIEW_SCHEMA_VERSION) return null;
+  if (Number(cache.analysis.review?.engineVersion || 0) < REVIEW_ENGINE_VERSION) return null;
+  return {
+    ...cache.analysis,
+    cache: { hit: true, generatedAt: cache.generatedAt || null },
+  };
 }
 
 async function readPlotCacheFile(cachePath) {
@@ -537,13 +414,12 @@ async function readPlotCacheFile(cachePath) {
   }
 }
 
-async function writePlotCache(sourcePath, source, kind, file, maxTrackPoints, analysis) {
+async function writePlotCache(sourcePath, source, file, maxTrackPoints, analysis) {
   const cache = {
     schema: PLOT_CACHE_SCHEMA,
     generatedAt: new Date().toISOString(),
     viewerVersion: packageInfo.version,
     source: {
-      kind,
       fileName: file,
       bytes: source.bytes,
       mtimeMs: source.mtimeMs,
@@ -563,8 +439,8 @@ async function writeJsonAtomic(filePath, value) {
   await fs.promises.rename(tempPath, filePath);
 }
 
-async function sendGpxForSource(res, kind, file, currentOptions) {
-  const sourcePath = sourcePathForKind(kind, file, currentOptions);
+async function sendVoyageGpx(res, file, currentOptions) {
+  const sourcePath = path.join(expandHome(currentOptions.voyageDirectory), file);
   const source = await sourceFingerprint(sourcePath);
   const gpxPath = gpxCachePath(sourcePath);
   const cachedGpx = await freshSidecarPath(gpxPath, source);
@@ -574,8 +450,7 @@ async function sendGpxForSource(res, kind, file, currentOptions) {
     fs.createReadStream(cachedGpx).pipe(res);
     return;
   }
-  const analysis = await analyseFileSource(
-    kind,
+  const analysis = await analyseVoyageFile(
     file,
     currentOptions,
     Number.MAX_SAFE_INTEGER,
@@ -598,23 +473,13 @@ async function analyseVoyage(
   voyagePath,
   {
     maxTrackPoints = MAX_TRACK_POINTS,
-    options: currentOptions = {},
     onProgress = null,
   } = {},
 ) {
   await assertReadableFile(voyagePath);
   emitAnalysisProgress(onProgress, 3, "opening-index", "Reading voyage index");
   const index = await readZipJson(voyagePath, "index.json");
-  const captureFiles = Array.isArray(index.captureFiles) ? index.captureFiles : [];
-  const captureReferences = Array.isArray(index.captureReferences) ? index.captureReferences : [];
-  const captureSources = await resolveVoyageCaptureSources(
-    voyagePath,
-    captureFiles,
-    captureReferences,
-    currentOptions,
-    index,
-  );
-  if (captureSources.length === 0) throw new Error(voyageCaptureSourceError(captureReferences));
+  const captureSources = await resolveVoyageDataSource(voyagePath, index);
 
   const completionCheckpoint = await readOptionalZipJson(
     voyagePath,
@@ -722,7 +587,7 @@ async function analyseVoyage(
     comment: index.comment || "",
     recomputedReplay: summarizeRecomputedReplay(index.recomputedReplay),
     replayVerification,
-    gpxUrl: `/plugins/signalk-ajrm-marine-voyage-viewer/files/voyages/${encodeURIComponent(path.basename(voyagePath))}/track.gpx`,
+    gpxUrl: `/plugins/signalk-ajrm-marine-voyage-viewer/voyages/${encodeURIComponent(path.basename(voyagePath))}/track.gpx`,
     ownContext,
     summary,
     review,
@@ -737,91 +602,7 @@ async function analyseVoyage(
   };
 }
 
-async function analyseRecording(
-  recordingPath,
-  { kind = "logs", maxTrackPoints = MAX_TRACK_POINTS, onProgress = null } = {},
-) {
-  await assertReadableFile(recordingPath);
-  const stat = await fs.promises.stat(recordingPath);
-  const firstPass = await scanRecordingLines(recordingPath, null, null, {
-    onProgress(bytes) {
-      emitAnalysisProgress(
-        onProgress,
-        5 + (bytes / Math.max(1, stat.size)) * 40,
-        "discovering-own-vessel",
-        "Scanning recording to identify own vessel (pass 1 of 2)",
-        { processedBytes: bytes, totalBytes: stat.size, pass: 1, passes: 2 },
-      );
-    },
-  });
-  const ownContext = chooseOwnContext(firstPass.positionCounts);
-  if (!ownContext) {
-    throw new Error("No own-vessel navigation.position samples found.");
-  }
-  const ownPass = await scanRecordingLines(recordingPath, ownContext, null, {
-    onProgress(bytes) {
-      emitAnalysisProgress(
-        onProgress,
-        45 + (bytes / Math.max(1, stat.size)) * 45,
-        "analysing-recording",
-        "Analysing recording (pass 2 of 2)",
-        { processedBytes: bytes, totalBytes: stat.size, pass: 2, passes: 2 },
-      );
-    },
-  });
-  const track = sortTrack(ownPass.track);
-  const drTracks = buildDrTracks(ownPass.drTrackSamples, maxTrackPoints, "capture");
-  const gpsIntegrity = buildGpsIntegrityAnalysis(ownPass.gpsIntegritySamples);
-  const traffic = buildTrafficAnalysis(
-    ownPass.trafficNotificationSamples,
-    ownPass.trafficProjectionMetrics,
-  );
-  const index = {
-    id: path.basename(recordingPath).replace(/\.jsonl(\.gz)?$/i, ""),
-    startedAt: track[0]?.ts || firstPass.sampleStart || recordingStartedAtFromFileName(path.basename(recordingPath)),
-    stoppedAt: track[track.length - 1]?.ts || firstPass.sampleEnd || null,
-    startReason: kind === "clips" ? "Clip" : "Log",
-    stopReason: "",
-    snapshotCount: 0,
-  };
-  const summary = buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity, traffic);
-  const review = buildVoyageReview({
-    index,
-    track,
-    summary,
-    gpsIntegrity,
-    traffic,
-    drTracks,
-    biteReports: [],
-    replayVerification: null,
-  });
-  emitAnalysisProgress(onProgress, 95, "building-review", "Building recording review");
-  const fileName = path.basename(recordingPath);
-  return {
-    id: index.id,
-    fileName,
-    sourceKind: kind,
-    comment: "",
-    gpxUrl: `/plugins/signalk-ajrm-marine-voyage-viewer/files/${encodeURIComponent(kind)}/${encodeURIComponent(fileName)}/track.gpx`,
-    ownContext,
-    summary,
-    review,
-    traffic,
-    hourlyMarkers: hourlyMarkers(track),
-    track: thinTrack(track, maxTrackPoints),
-    drTracks,
-    gpsIntegrity,
-    originalTrackPoints: track.length,
-  };
-}
-
-async function resolveVoyageCaptureSources(
-  voyagePath,
-  captureFiles,
-  captureReferences,
-  currentOptions,
-  index = {},
-) {
+async function resolveVoyageDataSource(voyagePath, index = {}) {
   const canonicalInput = index?.canonicalInput;
   if (canonicalInput?.contract === CANONICAL_INPUT_CONTRACT) {
     const innerPath = String(
@@ -841,51 +622,28 @@ async function resolveVoyageCaptureSources(
       contract: CANONICAL_INPUT_CONTRACT,
     }];
   }
-  if (captureFiles.length) {
-    const sources = [];
-    for (const captureFile of captureFiles) {
-      const innerPath = captureFile.startsWith("capture/")
-        ? captureFile
-        : `capture/${captureFile}`;
-      const entry = await zipEntryMetadata(voyagePath, innerPath);
-      if (!entry) continue;
-      sources.push({
-        kind: "zip",
-        voyagePath,
-        innerPath,
-        bytes: entry.uncompressedSize,
-      });
+  const recomputedOutput = index?.recomputedOutput || index?.recomputedReplay?.result?.output;
+  const innerPath = String(recomputedOutput?.fileName || "");
+  if (
+    recomputedOutput?.contract === "ajrm-marine-recomputed-output-v1" &&
+    recomputedOutput?.complete === true &&
+    innerPath
+  ) {
+    const entry = await zipEntryMetadata(voyagePath, innerPath);
+    if (!entry) {
+      throw new Error(`Voyage bundle declares recomputed output, but ${innerPath} is missing.`);
     }
-    return sources;
+    return [{
+      kind: "zip",
+      voyagePath,
+      innerPath,
+      bytes: entry.uncompressedSize,
+      contract: recomputedOutput.contract,
+    }];
   }
-  const sources = [];
-  for (const reference of captureReferences) {
-    const sourcePath = await resolveCaptureReferencePath(reference, currentOptions);
-    if (sourcePath) {
-      const stat = await fs.promises.stat(sourcePath);
-      sources.push({ kind: "file", path: sourcePath, bytes: stat.size });
-    }
-  }
-  if (sources.length === 0) {
-    const recomputedOutput = index?.recomputedOutput || index?.recomputedReplay?.result?.output;
-    const innerPath = String(recomputedOutput?.fileName || "");
-    if (
-      recomputedOutput?.contract === "ajrm-marine-recomputed-output-v1" &&
-      recomputedOutput?.complete === true &&
-      innerPath
-    ) {
-      const entry = await zipEntryMetadata(voyagePath, innerPath);
-      if (entry) {
-        sources.push({
-          kind: "zip",
-          voyagePath,
-          innerPath,
-          bytes: entry.uncompressedSize,
-        });
-      }
-    }
-  }
-  return sources;
+  throw new Error(
+    "Unsupported voyage bundle: expected canonical input or a complete recomputed output.",
+  );
 }
 
 async function readVoyageDrTracks(voyagePath, index, maxTrackPoints) {
@@ -901,33 +659,6 @@ async function readVoyageDrTracks(voyagePath, index, maxTrackPoints) {
   } catch {
     return null;
   }
-}
-
-async function resolveCaptureReferencePath(reference, currentOptions) {
-  const candidates = [
-    reference?.sourcePath,
-    reference?.compressedSourcePath,
-  ].filter(Boolean);
-  const fileName = path.basename(String(reference?.fileName || ""));
-  if (fileName) {
-    candidates.push(path.join(currentOptions.logDirectory || DEFAULT_LOG_DIRECTORY, fileName));
-    if (!fileName.endsWith(".gz")) {
-      candidates.push(path.join(currentOptions.logDirectory || DEFAULT_LOG_DIRECTORY, `${fileName}.gz`));
-    }
-  }
-  for (const candidate of candidates) {
-    const expanded = expandHome(candidate);
-    const stat = await fs.promises.stat(expanded).catch(() => null);
-    if (stat?.isFile()) return expanded;
-  }
-  return null;
-}
-
-function voyageCaptureSourceError(captureReferences) {
-  if (captureReferences.length) {
-    return "Voyage bundle references AJRM Marine Logger files, but none were found on this server.";
-  }
-  return "Voyage bundle has no canonical input, embedded capture files, or AJRM Marine Logger references.";
 }
 
 async function scanCaptureSources(
@@ -995,33 +726,12 @@ async function scanCaptureSources(
 }
 
 async function readCaptureSourceLines(source, onRecord, onProgress = null) {
-  if (source.kind === "zip") {
-    await readCaptureLines(
-      source.voyagePath,
-      source.innerPath,
-      onRecord,
-      onProgress,
-    );
-    return;
-  }
-  await readRecordingLines(source.path, onRecord, onProgress);
-}
-
-async function scanRecordingLines(
-  recordingPath,
-  ownContext,
-  window = null,
-  { onProgress = null } = {},
-) {
-  const result = emptyScanResult();
-  await readRecordingLines(
-    recordingPath,
-    (record) => {
-      scanRecord(record, ownContext, result, window);
-    },
+  await readCaptureLines(
+    source.voyagePath,
+    source.innerPath,
+    onRecord,
     onProgress,
   );
-  return result;
 }
 
 function emptyScanResult() {
@@ -2339,8 +2049,6 @@ function buildSummary(index, track, ownPass, firstPass, ownContext, gpsIntegrity
     trackPoints: track.length,
     plottedTrackPoints: track.length,
     ownContext,
-    captureStartedAt: index.ajrmMarineLogger?.start?.recording?.from || null,
-    captureStoppedAt: index.ajrmMarineLogger?.stop?.recording?.to || null,
     startReason: index.startReason || "",
     stopReason: index.stopReason || "",
     snapshotCount: Number(index.snapshotCount) || 0,
@@ -2694,7 +2402,7 @@ function buildReviewHighlights({
     const complete =
       replay.coverage?.complete === true &&
       replay.coverage?.preparedComplete === true &&
-      replay.coverage?.lastReason === "end of capture";
+      replay.coverage?.lastReason === "end of canonical input";
     const isolated = replay.liveInputIsolation?.valid;
     highlights.push(reviewHighlight(
       "Recomputed replay",
@@ -2838,8 +2546,8 @@ function addRecomputedReplayReview(
   if (replayVerification?.checkpointExpected === true) {
     paragraphs.push(
       replayVerification.completionVerified === true
-        ? `The durable replay-completion checkpoint and all ${replayVerification.resultSegmentsTotal || 0} declared result segments were verified against the embedded files.`
-        : `The replay declares durable completion, but its checkpoint or result-segment evidence did not validate: ${(replayVerification.issues || []).join("; ") || "unknown completion-evidence failure"}.`,
+        ? "The durable replay-completion checkpoint and recomputed output were verified against the embedded file."
+        : `The replay declares durable completion, but its checkpoint or recomputed-output evidence did not validate: ${(replayVerification.issues || []).join("; ") || "unknown completion-evidence failure"}.`,
     );
     if (replayVerification.completionVerified !== true) {
       findings.push({
@@ -2848,7 +2556,7 @@ function addRecomputedReplayReview(
         title: "Recomputed completion evidence invalid",
         detail:
           (replayVerification.issues || []).join("; ") ||
-          "The durable completion checkpoint or result-segment manifest could not be verified.",
+          "The durable completion checkpoint or recomputed output could not be verified.",
       });
     } else {
       findings.push({
@@ -2856,14 +2564,14 @@ function addRecomputedReplayReview(
         level: "green",
         title: "Recomputed result packaging verified",
         detail:
-          "The completion checkpoint, coverage result, result-segment manifest, and embedded capture files agree.",
+          "The completion checkpoint, replay result, timing evidence, and embedded recomputed output agree.",
       });
     }
   }
   const complete =
     replay.coverage?.complete === true &&
     replay.coverage?.preparedComplete === true &&
-    replay.coverage?.lastReason === "end of capture";
+    replay.coverage?.lastReason === "end of canonical input";
   if (!complete) {
     findings.push({
       category: "software",
@@ -2916,16 +2624,9 @@ function evaluateRecomputedCompletion({ index, checkpoint, captureSources }) {
     rawReplay.result && typeof rawReplay.result === "object"
       ? rawReplay.result
       : {};
-  const manifest =
-    result.resultSegments && typeof result.resultSegments === "object"
-      ? result.resultSegments
-      : {};
-  const segments = Array.isArray(manifest.segments) ? manifest.segments : [];
-  const sourceByName = new Map(
-    (captureSources || []).map((source) => [
-      path.basename(source.innerPath || source.path || ""),
-      source,
-    ]),
+  const output = result.output || index?.recomputedOutput || {};
+  const outputSource = (captureSources || []).find(
+    (source) => source.innerPath === output.fileName,
   );
   const checkpointExpected =
     index.recomputationVerified !== undefined ||
@@ -2936,48 +2637,31 @@ function evaluateRecomputedCompletion({ index, checkpoint, captureSources }) {
     checkpoint?.contract === "ajrm-marine-recomputed-completion" &&
     Number(checkpoint?.contractVersion) === 1 &&
     checkpoint?.voyageId === index.id &&
+    checkpoint?.completionConfirmed === true &&
     checkpoint?.verified === true &&
-    checkpoint?.recomputationVerified === true;
+    checkpoint?.recomputationVerified === true &&
+    (checkpoint?.replayResult?.contract || checkpoint?.recomputedReplay?.result?.contract) ===
+      "ajrm-marine-replay-result-v1";
   if (checkpointExpected && !checkpointValid) {
     issues.push("durable completion checkpoint missing or invalid");
   }
   const coverageComplete =
     replay.coverage?.complete === true &&
     replay.coverage?.preparedComplete === true &&
-    replay.coverage?.lastReason === "end of capture" &&
-    replay.coverage?.resultSegmentsComplete === true;
+    replay.coverage?.lastReason === "end of canonical input";
   if (!coverageComplete) issues.push("replay coverage is not complete");
-  const resultSegmentsComplete =
-    manifest.complete === true &&
-    manifest.incomplete !== true &&
-    manifest.aborted !== true &&
-    Number(manifest.segmentsTotal) === segments.length &&
-    Number(manifest.segmentsFinalized) === segments.length &&
-    (!Array.isArray(manifest.errors) || manifest.errors.length === 0);
-  if (!resultSegmentsComplete) {
-    issues.push("result-segment manifest is incomplete");
+  const outputComplete =
+    output.contract === "ajrm-marine-recomputed-output-v1" &&
+    output.complete === true &&
+    Number(output.writeErrors || 0) === 0 &&
+    Boolean(output.fileName) &&
+    Boolean(outputSource) &&
+    Number(outputSource?.bytes) === Number(output.bytes);
+  if (!outputComplete) {
+    issues.push("recomputed output is missing, incomplete, or has a size mismatch");
   }
-  let embeddedSegmentsComplete = segments.length > 0;
-  for (const segment of segments) {
-    const source = sourceByName.get(path.basename(String(segment.fileName || "")));
-    const bytesMatch =
-      source &&
-      Number.isFinite(Number(segment.bytes)) &&
-      Number(source.bytes) === Number(segment.bytes);
-    if (
-      !source ||
-      !bytesMatch ||
-      segment.finalized !== true ||
-      segment.available !== true ||
-      segment.error
-    ) {
-      embeddedSegmentsComplete = false;
-      issues.push(
-        `embedded result segment ${segment.fileName || "unknown"} is missing, incomplete, or has a size mismatch`,
-      );
-    }
-  }
-  if (!segments.length) issues.push("result-segment manifest contains no segments");
+  const timingValid = result.timing?.valid === true;
+  if (!timingValid) issues.push("replay timing is not explicitly valid");
   const indexComplete =
     index.incomplete !== true &&
     index.recomputationVerified === true &&
@@ -2994,14 +2678,13 @@ function evaluateRecomputedCompletion({ index, checkpoint, captureSources }) {
     checkpointPresent: Boolean(checkpoint),
     checkpointValid,
     coverageComplete,
-    resultSegmentsComplete,
-    embeddedSegmentsComplete,
-    resultSegmentsTotal: segments.length,
+    outputComplete,
+    timingValid,
     completionVerified:
       (!checkpointExpected || checkpointValid) &&
       coverageComplete &&
-      resultSegmentsComplete &&
-      embeddedSegmentsComplete &&
+      outputComplete &&
+      timingValid &&
       (!checkpointExpected || indexComplete),
     liveInputIsolationValid: replay.liveInputIsolation?.valid ?? null,
     issues: [...new Set(issues)],
@@ -3403,25 +3086,6 @@ async function readCaptureLines(
   }
 }
 
-async function readRecordingLines(
-  recordingPath,
-  onRecord,
-  onProgress = null,
-) {
-  const input = fs.createReadStream(recordingPath);
-  let processedBytes = 0;
-  input.on("data", (chunk) => {
-    processedBytes += chunk.length;
-    if (typeof onProgress === "function") onProgress(processedBytes);
-  });
-  const stream = recordingPath.endsWith(".gz") ? input.pipe(zlib.createGunzip()) : input;
-  const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
-  for await (const line of lines) {
-    if (!line.trim()) continue;
-    onRecord(JSON.parse(line));
-  }
-}
-
 async function sendGpx(res, analysis, fallbackFile) {
   const gpx = generateGpx(analysis);
   const gpxName = defaultGpxFileName(analysis, fallbackFile);
@@ -3545,26 +3209,6 @@ function safeVoyageFile(value) {
   return file;
 }
 
-function safeFileKind(value) {
-  const kind = String(value || "").toLowerCase();
-  if (kind === "voyages") return kind;
-  throw new Error("Invalid file kind.");
-}
-
-function safeFileNameForKind(kind, value) {
-  if (kind !== "voyages") throw new Error("Invalid file kind.");
-  return safeVoyageFile(value);
-}
-
-function recordingStartedAtFromFileName(fileName) {
-  const match = String(fileName || "").match(/(\d{8})T?(\d{6})Z?/);
-  if (!match) return null;
-  const [, date, time] = match;
-  const iso = `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}.000Z`;
-  const ms = Date.parse(iso);
-  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
-}
-
 function expandHome(value) {
   const text = String(value || "");
   if (text === "~") return os.homedir();
@@ -3685,8 +3329,7 @@ function safeFileStem(value) {
 }
 
 module.exports._private = {
-  analyseFileSource,
-  analyseRecording,
+  analyseVoyageFile,
   analyseVoyage,
   chooseOwnContext,
   defaultGpxFileName,
@@ -3695,7 +3338,6 @@ module.exports._private = {
   haversineMeters,
   hourlyMarkers,
   listVoyages,
-  legacyPlotCachePath,
   plotCachePath,
   thinTrack,
   trackDistanceNm,
