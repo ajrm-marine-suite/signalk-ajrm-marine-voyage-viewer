@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.22
+
+- Make the bundled Map Core integrity test portable across LF and CRLF
+  checkouts while retaining exact content comparison.
+
 ## 0.6.21
 
 - Add current installation guidance and clarify that Capture supplies the

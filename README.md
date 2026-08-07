@@ -6,7 +6,7 @@ Signal K webapp for plotting and reviewing AJRM Marine Capture voyage bundles.
 
 ```bash
 cd ~/.signalk
-npm install git+https://github.com/ajrm-marine-suite/signalk-ajrm-marine-voyage-viewer.git#v0.6.21 --omit=dev --no-package-lock
+npm install git+https://github.com/ajrm-marine-suite/signalk-ajrm-marine-voyage-viewer.git#v0.6.22 --omit=dev --no-package-lock
 sudo systemctl restart signalk
 ```
 

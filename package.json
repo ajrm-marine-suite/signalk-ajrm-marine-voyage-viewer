@@ -1,6 +1,6 @@
 {
   "name": "signalk-ajrm-marine-voyage-viewer",
-  "version": "0.6.21",
+  "version": "0.6.22",
   "description": "Plots and exports AJRM Marine Capture voyage tracks.",
   "main": "plugin/index.js",
   "scripts": {
