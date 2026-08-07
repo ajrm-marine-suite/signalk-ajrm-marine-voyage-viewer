@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.21
+
+- Add current installation guidance and clarify that Capture supplies the
+  voyage list, canonical data, notes, routes, and diagnostic evidence.
+
 ## 0.6.20
 
 - Add visible hover/focus help to zoom, chart and Voyage Viewer map icons

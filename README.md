@@ -2,6 +2,17 @@
 
 Signal K webapp for plotting and reviewing AJRM Marine Capture voyage bundles.
 
+## Install
+
+```bash
+cd ~/.signalk
+npm install git+https://github.com/ajrm-marine-suite/signalk-ajrm-marine-voyage-viewer.git#v0.6.21 --omit=dev --no-package-lock
+sudo systemctl restart signalk
+```
+
+Enable **AJRM Marine Voyage Viewer** in Signal K. Capture supplies the voyage
+list, canonical data, notes, routes, and diagnostic evidence.
+
 Version `0.6.20` adds visible hover/focus help to every map control icon,
 including zoom, chart selection, chart cycling and voyage actions.
 
