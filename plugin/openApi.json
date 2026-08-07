@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "AJRM Marine Voyage Viewer API",
-    "version": "0.7.0",
+    "version": "0.7.1",
     "description": "Lists, analyses, downloads and exports self-contained AJRM Marine Capture voyage bundles."
   },
   "servers": [

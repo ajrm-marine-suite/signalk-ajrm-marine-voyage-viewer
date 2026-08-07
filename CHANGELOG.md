@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1 - 2026-08-07
+
+- Adopt reviewed AJRM Marine Map Core 0.7.0, including complete chart-selector
+  listener cleanup when a map is destroyed or recreated.
+- Declare the suite Node.js 20 baseline.
+
 ## 0.7.0 - 2026-08-07
 
 - Make current self-contained Capture bundles the only supported voyage input.

@@ -1,4 +1,4 @@
-import * as MapCore from "./ajrm-map-core.mjs?v=0.6.11";
+import * as MapCore from "./ajrm-map-core.mjs?v=0.7.0";
 
 const apiBase = "/plugins/signalk-ajrm-marine-voyage-viewer";
 const elements = {

@@ -1,5 +1,5 @@
 export const MAP_CORE_CONTRACT = "ajrm-marine-map-shell-v1";
-export const MAP_CORE_VERSION = "0.6.11";
+export const MAP_CORE_VERSION = "0.7.0";
 export const AUTO_CHARTS_NAME = "Auto Charts";
 export const OPEN_SEA_MAP_NAME = "OpenSeaMap";
 export const CHART_FOLDER_API_BASE = "/plugins/signalk-charts-provider-simple";
@@ -556,12 +556,16 @@ export function createChartSelectorControl({
 	windowObject = globalThis.window,
 }) {
 	let panel;
+	let button;
 	let renderPanel = () => {};
+	let fitPanel = () => {};
+	let changeHandler = () => {};
+	let mapClickHandler = () => {};
 	const definition = L.Control.extend({
 		options: { position },
 			onAdd() {
 			const container = L.DomUtil.create("div", "leaflet-bar ajrm-map-selector");
-			const button = L.DomUtil.create("button", "ajrm-map-button", container);
+			button = L.DomUtil.create("button", "ajrm-map-button", container);
 			button.type = "button";
 			setMapControlHoverHelp(button, "Choose maps and charts");
 			button.setAttribute("aria-label", "Choose maps and charts");
@@ -590,7 +594,7 @@ export function createChartSelectorControl({
 					fitFloatingPanel(panel, windowObject);
 				}
 			};
-			const fitPanel = () => {
+			fitPanel = () => {
 				if (!panel.hidden) fitFloatingPanel(panel, windowObject);
 			};
 			renderPanel();
@@ -607,9 +611,9 @@ export function createChartSelectorControl({
 				}
 			});
 			windowObject?.addEventListener?.("resize", fitPanel);
-			panel.addEventListener("change", async (event) => {
+			changeHandler = async (event) => {
 				const input = event.target;
-				if (!(input instanceof HTMLInputElement)) return;
+				if (!input || String(input.tagName).toLowerCase() !== "input") return;
 				if (input.dataset.chartFolder !== undefined) {
 					input.disabled = true;
 					try {
@@ -626,12 +630,19 @@ export function createChartSelectorControl({
 				if (input.type === "radio") setBaseMap(input.value);
 				else overlays.find((item) => item.name === input.value)?.setEnabled(input.checked);
 				renderPanel();
-			});
-			map.on("click", () => {
+			};
+			panel.addEventListener("change", changeHandler);
+			mapClickHandler = () => {
 				panel.hidden = true;
 				button.setAttribute("aria-expanded", "false");
-			});
+			};
+			map.on("click", mapClickHandler);
 			return container;
+		},
+		onRemove() {
+			windowObject?.removeEventListener?.("resize", fitPanel);
+			panel?.removeEventListener?.("change", changeHandler);
+			map.off?.("click", mapClickHandler);
 		},
 	});
 	const control = new definition();
