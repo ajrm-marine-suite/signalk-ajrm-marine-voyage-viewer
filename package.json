@@ -1,10 +1,10 @@
 {
   "name": "signalk-ajrm-marine-voyage-viewer",
-  "version": "0.7.1",
-  "description": "Plots and exports AJRM Marine Capture voyage tracks.",
+  "version": "0.8.0",
+  "description": "Retired compatibility marker; voyage review moved into AJRM Marine Capture.",
   "main": "plugin/index.js",
   "scripts": {
-    "test": "node --test && node --check plugin/index.js && node --check public/app.js"
+    "test": "node --test test/retired.test.js && node --check plugin/index.js"
   },
   "keywords": [
     "signalk-node-server-plugin",
@@ -34,23 +34,14 @@
   },
   "files": [
     "plugin",
-    "public",
     "README.md",
     "LICENSE"
   ],
-  "signalk-plugin-enabled-by-default": true,
+  "signalk-plugin-enabled-by-default": false,
   "signalk": {
-    "displayName": "AJRM Marine Voyage Viewer",
-    "appIcon": "./public/icon.svg",
+    "displayName": "AJRM Marine Voyage Viewer (retired)",
     "recommends": [
       "signalk-ajrm-marine-capture"
     ]
-  },
-  "dependencies": {
-    "yauzl": "^3.4.0"
-  },
-  "devDependencies": {
-    "@ajrm-marine/map-core": "github:ajrm-marine-suite/ajrm-marine-map-core#v0.7.0",
-    "adm-zip": "^0.6.0"
   }
 }
